@@ -1,6 +1,8 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 
 import 'app.dart';
@@ -17,6 +19,7 @@ import 'ui/debug/comment_probe_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  _installFrameLogger();
 
   await _ensurePermissions();
   await ForegroundKeepAlive.init();
@@ -76,12 +79,32 @@ Future<void> main() async {
 }
 
 /// Android 9 及以下需要写外部存储；10+ 无权限时回退到应用私有目录。
-Future<void> _ensurePermissions() async {
-  if (!Platform.isAndroid) return;
+Future<void> _ensurePermissions() async {  if (!Platform.isAndroid) return;
   try {
     if (await AndroidPermissions.isStorageReady()) return;
     await AndroidPermissions.requestStorage();
   } catch (_) {
     // 权限失败不阻塞启动：StorageService 会自动回退到可写目录。
   }
+}
+
+/// 帧耗时日志（仅调试）：超过 32ms 的帧打印一行，用于对比 UI 卡顿改动。
+void _installFrameLogger() {
+  if (!kDebugMode && !kProfileMode) return;
+  var jank = 0;
+  var frames = 0;
+  SchedulerBinding.instance.addTimingsCallback((List<FrameTiming> timings) {
+    for (final t in timings) {
+      frames++;
+      final totalMs = t.totalSpan.inMilliseconds;
+      if (totalMs >= 32) {
+        jank++;
+        debugPrint('[frame] jank build=${t.buildDuration.inMilliseconds}ms '
+            'raster=${t.rasterDuration.inMilliseconds}ms total=${totalMs}ms');
+      }
+    }
+    if (frames % 120 == 0 && frames > 0) {
+      debugPrint('[frame] summary frames=$frames jank=$jank');
+    }
+  });
 }

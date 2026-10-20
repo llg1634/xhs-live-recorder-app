@@ -60,15 +60,16 @@ abstract final class GlassTokens {
       navBarHeight + navBarMargin + 26 + MediaQuery.paddingOf(context).bottom;
 }
 
-/// 主题相关配色。深/浅色两套均为「真实可读」校准过的值：
+/// 主题相关配色。6 套主题色 × 深/浅色均按「真实可读」校准：
 /// 次要文字对比度不低于 4.5:1，正文不低于 7:1。
 @immutable
-class GlassColors {
+class GlassColors extends ThemeExtension<GlassColors> {
   const GlassColors({
     required this.brightness,
     required this.canvasTop,
     required this.canvasBottom,
     required this.blobs,
+    required this.glassTint,
     required this.glassFillTop,
     required this.glassFillBottom,
     required this.glassBorderTop,
@@ -97,8 +98,11 @@ class GlassColors {
   final Color canvasTop;
   final Color canvasBottom;
 
-  /// 氛围光斑（紫 / 洋红 / 青 / 蓝）。
+  /// 氛围光斑（主色 / 辅色 / 冷色 / 补光）。
   final List<Color> blobs;
+
+  /// 玻璃填充的染色倾向（由当前配色方案决定，深浅模式各自校准）。
+  final Color glassTint;
 
   final Color glassFillTop;
   final Color glassFillBottom;
@@ -138,10 +142,60 @@ class GlassColors {
 
   bool get isDark => brightness == Brightness.dark;
 
-  static GlassColors of(BuildContext context) =>
-      Theme.of(context).brightness == Brightness.dark ? dark : light;
+  /// 读取当前主题注入的调色板。
+  ///
+  /// 由 [AppTheme] 通过 [ThemeData.extensions] 注入；缺少扩展时回退到默认
+  /// 粉紫方案，保证单独 pump 某个页面时也不会崩。
+  static GlassColors of(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return theme.extension<GlassColors>() ??
+        (theme.brightness == Brightness.dark ? dark : light);
+  }
 
-  /// 深色：近黑底 + 紫/洋红/青低透明光斑。
+  @override
+  GlassColors copyWith() => this;
+
+  /// 主题切换时由 MaterialApp 的主题动画调用；逐字段插值，避免深浅切换时
+  /// 玻璃层出现突兀的"半套颜色"。
+  @override
+  GlassColors lerp(covariant GlassColors? other, double t) {
+    if (other == null) return this;
+    Color mix(Color a, Color b) => Color.lerp(a, b, t)!;
+    List<Color> mixList(List<Color> a, List<Color> b) {
+      if (a.length != b.length) return t < 0.5 ? a : b;
+      return <Color>[for (int i = 0; i < a.length; i++) mix(a[i], b[i])];
+    }
+
+    return GlassColors(
+      brightness: t < 0.5 ? brightness : other.brightness,
+      canvasTop: mix(canvasTop, other.canvasTop),
+      canvasBottom: mix(canvasBottom, other.canvasBottom),
+      blobs: mixList(blobs, other.blobs),
+      glassTint: mix(glassTint, other.glassTint),
+      glassFillTop: mix(glassFillTop, other.glassFillTop),
+      glassFillBottom: mix(glassFillBottom, other.glassFillBottom),
+      glassBorderTop: mix(glassBorderTop, other.glassBorderTop),
+      glassBorderBottom: mix(glassBorderBottom, other.glassBorderBottom),
+      glassShadow: mix(glassShadow, other.glassShadow),
+      cardShadow: mix(cardShadow, other.cardShadow),
+      textPrimary: mix(textPrimary, other.textPrimary),
+      textSecondary: mix(textSecondary, other.textSecondary),
+      textTertiary: mix(textTertiary, other.textTertiary),
+      accent: mix(accent, other.accent),
+      accentAlt: mix(accentAlt, other.accentAlt),
+      cyan: mix(cyan, other.cyan),
+      success: mix(success, other.success),
+      warning: mix(warning, other.warning),
+      danger: mix(danger, other.danger),
+      fieldFill: mix(fieldFill, other.fieldFill),
+      divider: mix(divider, other.divider),
+      scrim: mix(scrim, other.scrim),
+      grain: mix(grain, other.grain),
+      sheen: mix(sheen, other.sheen),
+    );
+  }
+
+  /// 深色默认（粉紫）：近黑底 + 主题色低透明光斑。
   static const GlassColors dark = GlassColors(
     brightness: Brightness.dark,
     canvasTop: Color(0xFF05060B),
@@ -152,6 +206,7 @@ class GlassColors {
       Color(0x3812C2E9), // 青
       Color(0x4D2B3BFF), // 蓝紫
     ],
+    glassTint: Color(0xFF6D3BFF),
     glassFillTop: Color(0x42161A26),
     glassFillBottom: Color(0x1F0C0E16),
     glassBorderTop: Color(0x5CFFFFFF),
@@ -174,7 +229,7 @@ class GlassColors {
     sheen: Color(0x1AFFFFFF),
   );
 
-  /// 浅色：雾白底 + 同色系淡光斑。
+  /// 浅色默认（粉紫）：雾白底 + 同色系淡光斑。
   static const GlassColors light = GlassColors(
     brightness: Brightness.light,
     canvasTop: Color(0xFFFBFBFF),
@@ -185,6 +240,7 @@ class GlassColors {
       Color(0x2D35C7E0),
       Color(0x267B8CFF),
     ],
+    glassTint: Color(0xFF7C5CFF),
     glassFillTop: Color(0xC2FFFFFF),
     glassFillBottom: Color(0x85FFFFFF),
     glassBorderTop: Color(0xF2FFFFFF),
@@ -245,7 +301,7 @@ class GlassColors {
         ),
       ];
 
-  /// 品牌渐变：洋红 → 紫。
+  /// 品牌渐变：当前主题色 → 辅助色。
   LinearGradient get brandGradient => LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,

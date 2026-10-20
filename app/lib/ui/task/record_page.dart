@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/record_task.dart';
@@ -35,6 +36,8 @@ class RecordPage extends StatelessWidget {
     final GlassColors c = GlassColors.of(context);
 
     return CustomScrollView(
+      key: const PageStorageKey<String>('record-scroll'),
+      scrollCacheExtent: const ScrollCacheExtent.pixels(320),
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       slivers: <Widget>[
         SliverPadding(
@@ -160,15 +163,17 @@ class RecordPage extends StatelessWidget {
                     constraints: const BoxConstraints(
                       maxWidth: GlassTokens.maxContentWidth,
                     ),
-                    child: _AnimatedEntry(
-                      key: ValueKey<String>(task.id),
-                      index: index,
-                      child: TaskCard(
-                        task: task,
-                        onTap: () => _openTask(context, task),
-                        onPreview: () => _openTask(context, task),
-                        onLongPress: () => _showTaskActions(context, task),
-                        onStop: () => _stopTask(context, task),
+                    child: RepaintBoundary(
+                      child: _AnimatedEntry(
+                        key: ValueKey<String>(task.id),
+                        index: index,
+                        child: TaskCard(
+                          task: task,
+                          onTap: () => _openTask(context, task),
+                          onPreview: () => _openTask(context, task),
+                          onLongPress: () => _showTaskActions(context, task),
+                          onStop: () => _stopTask(context, task),
+                        ),
                       ),
                     ),
                   ),
@@ -185,8 +190,11 @@ class RecordPage extends StatelessWidget {
     );
   }
 
-  Future<String?> _startTask(BuildContext context, String raw,
-      {bool withComments = false}) async {
+  Future<String?> _startTask(
+    BuildContext context,
+    String raw, {
+    bool withComments = false,
+  }) async {
     final RecordingManager manager = context.read<RecordingManager>();
     try {
       await manager.startTask(raw, withComments: withComments);

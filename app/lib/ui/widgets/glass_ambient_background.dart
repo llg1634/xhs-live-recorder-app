@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../theme/glass_tokens.dart';
 
-/// 背景氛围层：深色为近黑底 + 紫/洋红/青低透明光斑；浅色为雾白底 + 同色系淡光斑。
+/// 背景氛围层：深色为近黑底 + 主题色低透明光斑；浅色为雾白底 + 同色系淡光斑。
 ///
 /// 光斑是静态的（不逐帧动画），保证玻璃模糊 + 长列表滚动时的帧率稳定；
 /// 动态感由状态呼吸点、按钮按压、页面过渡提供。
@@ -61,7 +61,7 @@ class _BlobPainter extends CustomPainter {
     final double w = size.width;
     final double h = size.height;
 
-    // 主光斑：左上紫、右上洋红、左下蓝紫、右下青。
+    // 主光斑：左上主色、右上辅助色、左下补光、右下冷色。
     _blob(canvas, Offset(w * -0.12, h * 0.05), w * 0.92, colors.blobs[0]);
     _blob(canvas, Offset(w * 1.06, h * 0.20), w * 0.74, colors.blobs[1]);
     _blob(canvas, Offset(w * 0.08, h * 0.94), w * 0.86, colors.blobs[3]);

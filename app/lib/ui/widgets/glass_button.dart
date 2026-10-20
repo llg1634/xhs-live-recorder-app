@@ -5,7 +5,7 @@ import 'glass_surface.dart';
 import 'pressable.dart';
 
 enum GlassButtonVariant {
-  /// 品牌渐变主按钮（洋红 → 紫）。
+  /// 品牌渐变主按钮（当前主题色 → 辅助色）。
   primary,
 
   /// 玻璃底 + 主题色文字。

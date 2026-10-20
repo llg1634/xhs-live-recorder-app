@@ -139,7 +139,10 @@ class _DialogShell extends StatelessWidget {
                         height: 46,
                         fontSize: 14,
                         gradient: destructive
-                            ? <Color>[c.danger, const Color(0xFFE11D63)]
+                            ? <Color>[
+                                c.danger,
+                                Color.lerp(c.danger, Colors.black, 0.22)!,
+                              ]
                             : null,
                         onPressed: () => Navigator.of(context).pop(true),
                       ),

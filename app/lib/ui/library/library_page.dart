@@ -1,12 +1,14 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/local_server.dart';
 import '../../services/storage_service.dart';
 import '../../theme/glass_tokens.dart';
 import '../preview/live_preview_page.dart';
+import '../settings/app_settings.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/feedback.dart';
 import '../widgets/format_utils.dart';
@@ -94,16 +96,37 @@ class _LibraryPageState extends State<LibraryPage> {
       }
     });
 
-    for (final SessionInfo session in sessions) {
-      if (!mounted || generation != _generation) return;
-      await _enrich(storage, session, generation);
-    }
+    // 先并行读完所有目录的元信息，再一次性 setState。
+    // 旧实现每 enrich 一场录像就整页 setState 一次，切到「录像」Tab 时
+    // 连续 N 次重建整棵玻璃列表，正是首次滑动卡顿的放大器。
+    await _enrichAll(storage, sessions, generation);
   }
 
-  Future<void> _enrich(
+  Future<void> _enrichAll(
+    StorageService storage,
+    List<SessionInfo> sessions,
+    int generation,
+  ) async {
+    final List<_SessionMeta> metas = await Future.wait(
+      sessions.map((SessionInfo s) => _readMeta(storage, s)),
+    );
+    if (!mounted || generation != _generation) return;
+    setState(() {
+      for (int i = 0; i < sessions.length; i++) {
+        final _SessionMeta meta = metas[i];
+        sessions[i]
+          ..segments = meta.segments
+          ..bytes = meta.bytes
+          ..comments = meta.comments;
+        final DateTime? startedAt = meta.startedAt;
+        if (startedAt != null) sessions[i].startedAt = startedAt;
+      }
+    });
+  }
+
+  Future<_SessionMeta> _readMeta(
     StorageService storage,
     SessionInfo session,
-    int generation,
   ) async {
     try {
       final List<File> files = await storage.listSegments(session.dir);
@@ -119,10 +142,11 @@ class _LibraryPageState extends State<LibraryPage> {
         total += length;
         segments.add(SessionSegment(file: file, bytes: length));
       }
+      DateTime? startedAt;
       if (session.parsedStartedAt == null) {
         try {
           final FileStat stat = await session.dir.stat();
-          session.startedAt = stat.modified;
+          startedAt = stat.modified;
         } catch (_) {
           // 保持创建时间兜底。
         }
@@ -141,18 +165,18 @@ class _LibraryPageState extends State<LibraryPage> {
       } catch (_) {
         comments = 0;
       }
-      if (!mounted || generation != _generation) return;
-      setState(() {
-        session.segments = segments;
-        session.bytes = total;
-        session.comments = comments;
-      });
+      return _SessionMeta(
+        segments: segments,
+        bytes: total,
+        comments: comments,
+        startedAt: startedAt,
+      );
     } catch (_) {
-      if (!mounted || generation != _generation) return;
-      setState(() {
-        session.segments = <SessionSegment>[];
-        session.bytes = 0;
-      });
+      return const _SessionMeta(
+        segments: <SessionSegment>[],
+        bytes: 0,
+        comments: 0,
+      );
     }
   }
 
@@ -194,12 +218,14 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 
   /// 真正删除文件；返回是否成功（失败时已提示）。
-  Future<bool> _deleteFiles(SessionInfo session) async {
+  ///
+  /// [quick] 为 true 表示用户已关闭二次确认，SnackBar 只提示「已删除」。
+  Future<bool> _deleteFiles(SessionInfo session, {bool quick = false}) async {
     final StorageService storage = context.read<StorageService>();
     try {
       await storage.deleteSession(session.dir);
       if (mounted) {
-        showGlassSnack(context, '已删除「${session.displayName}」');
+        showGlassSnack(context, quick ? '已删除' : '已删除「${session.displayName}」');
       }
       return true;
     } catch (e) {
@@ -221,9 +247,10 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 
   Future<void> _deleteFromButton(SessionInfo session) async {
-    if (!await _confirmDeleteDialog(session)) return;
+    final bool confirm = context.read<AppSettingsController>().deleteConfirm;
+    if (confirm && !await _confirmDeleteDialog(session)) return;
     if (!mounted) return;
-    final bool ok = await _deleteFiles(session);
+    final bool ok = await _deleteFiles(session, quick: !confirm);
     if (ok) _removeFromList(session);
   }
 
@@ -275,6 +302,9 @@ class _LibraryPageState extends State<LibraryPage> {
       backgroundColor: c.canvasBottom,
       onRefresh: () => _load(silent: true, retryRoot: true),
       child: CustomScrollView(
+        key: const PageStorageKey<String>('library-scroll'),
+        // 预取约一张卡的高度即可：再多会把更多模糊层塞进首帧。
+        scrollCacheExtent: const ScrollCacheExtent.pixels(320),
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: <Widget>[
           SliverPadding(
@@ -441,31 +471,37 @@ class _LibraryPageState extends State<LibraryPage> {
                       ),
                       child: Padding(
                         padding: const EdgeInsets.only(bottom: GlassTokens.gap),
-                        child: Dismissible(
-                          key: ValueKey<String>(session.dir.path),
-                          direction: DismissDirection.endToStart,
-                          dismissThresholds: const <DismissDirection, double>{
-                            DismissDirection.endToStart: 0.35,
-                          },
-                          background: _DeleteBackground(
-                            label: '删除「${session.displayName}」',
-                          ),
-                          confirmDismiss: (DismissDirection direction) async {
-                            if (!await _confirmDeleteDialog(session)) {
-                              return false;
-                            }
-                            return _deleteFiles(session);
-                          },
-                          onDismissed: (DismissDirection direction) =>
-                              _removeFromList(session),
-                          child: SessionCard(
-                            session: session,
-                            expanded: _expandedPath == session.dir.path,
-                            onToggle: () => _toggle(session),
-                            onLongPress: () => _showActions(session),
-                            onDelete: () => _deleteFromButton(session),
-                            onPlaySegment: (SessionSegment segment, int i) =>
-                                _playSegment(session, segment, i),
+                        child: RepaintBoundary(
+                          child: Dismissible(
+                            key: ValueKey<String>(session.dir.path),
+                            direction: DismissDirection.endToStart,
+                            dismissThresholds: const <DismissDirection, double>{
+                              DismissDirection.endToStart: 0.35,
+                            },
+                            background: _DeleteBackground(
+                              label: '删除「${session.displayName}」',
+                            ),
+                            confirmDismiss: (DismissDirection direction) async {
+                              final bool confirm = context
+                                  .read<AppSettingsController>()
+                                  .deleteConfirm;
+                              if (confirm &&
+                                  !await _confirmDeleteDialog(session)) {
+                                return false;
+                              }
+                              return _deleteFiles(session, quick: !confirm);
+                            },
+                            onDismissed: (DismissDirection direction) =>
+                                _removeFromList(session),
+                            child: SessionCard(
+                              session: session,
+                              expanded: _expandedPath == session.dir.path,
+                              onToggle: () => _toggle(session),
+                              onLongPress: () => _showActions(session),
+                              onDelete: () => _deleteFromButton(session),
+                              onPlaySegment: (SessionSegment segment, int i) =>
+                                  _playSegment(session, segment, i),
+                            ),
                           ),
                         ),
                       ),
@@ -505,6 +541,21 @@ class _LibraryPageState extends State<LibraryPage> {
     }
     return total;
   }
+}
+
+/// 单场录像的磁盘元信息，用于批量 enrich 后一次 setState。
+class _SessionMeta {
+  const _SessionMeta({
+    required this.segments,
+    required this.bytes,
+    required this.comments,
+    this.startedAt,
+  });
+
+  final List<SessionSegment> segments;
+  final int bytes;
+  final int comments;
+  final DateTime? startedAt;
 }
 
 class _ListHint extends StatelessWidget {
@@ -738,17 +789,18 @@ class _SkeletonCardState extends State<_SkeletonCard>
         borderRadius: BorderRadius.circular(6),
       ),
     );
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (BuildContext context, Widget? child) {
-        return Opacity(opacity: 0.45 + _controller.value * 0.45, child: child);
-      },
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: GlassTokens.gap),
-        child: GlassSurface(
-          radius: GlassTokens.radiusCard,
-          blur: GlassTokens.blur,
-          padding: const EdgeInsets.all(14),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: GlassTokens.gap),
+      child: GlassSurface(
+        radius: GlassTokens.radiusCard,
+        blur: GlassTokens.blurSm,
+        padding: const EdgeInsets.all(14),
+        child: AnimatedBuilder(
+          animation: _controller,
+          // 只让骨架内容呼吸，不让 Opacity 包住 BackdropFilter：后者会每帧
+          // 触发一次图层合成，加载态三个骨架就会持续掉帧。
+          builder: (BuildContext context, Widget? child) =>
+              Opacity(opacity: 0.45 + _controller.value * 0.45, child: child),
           child: Row(
             children: <Widget>[
               Container(

@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -52,12 +51,14 @@ class _CommentProbePageState extends State<CommentProbePage> {
     _controller.loadRequest(Uri.parse(widget.url));
     // WebView 没有 document-start 注入 API：onPageStarted 最早，之后页面脚本
     // 仍会再加载一批 chunk，所以这里在 started 后再补一次幂等注入。
-    _controller.setNavigationDelegate(NavigationDelegate(
-      onPageStarted: (_) => _inject(),
-      onPageFinished: (_) => _inject(),
-      onWebResourceError: (e) =>
-          _log('page-error ${e.errorCode}: ${e.description}'),
-    ));
+    _controller.setNavigationDelegate(
+      NavigationDelegate(
+        onPageStarted: (_) => _inject(),
+        onPageFinished: (_) => _inject(),
+        onWebResourceError: (e) =>
+            _log('page-error ${e.errorCode}: ${e.description}'),
+      ),
+    );
 
     _timer = Timer.periodic(const Duration(seconds: 10), (_) => _dumpStats());
     Timer(Duration(seconds: widget.seconds), _finish);
@@ -69,8 +70,12 @@ class _CommentProbePageState extends State<CommentProbePage> {
     try {
       final dir = Directory('/storage/emulated/0/Movies/直播录制/_probe');
       if (!await dir.exists()) await dir.create(recursive: true);
-      _logFile = File('${dir.path}/probe_${DateTime.now().millisecondsSinceEpoch}.log');
-      await _logFile!.writeAsString('probe start url=${widget.url} ua=$_desktopUA\n');
+      _logFile = File(
+        '${dir.path}/probe_${DateTime.now().millisecondsSinceEpoch}.log',
+      );
+      await _logFile!.writeAsString(
+        'probe start url=${widget.url} ua=$_desktopUA\n',
+      );
     } catch (e) {
       debugPrint('[probe] log file failed: $e');
       _logFile = null;
@@ -81,7 +86,7 @@ class _CommentProbePageState extends State<CommentProbePage> {
     debugPrint('[probe] $line');
     final f = _logFile;
     if (f == null) return;
-    f.writeAsString('$line\n', mode: FileMode.append, flush: false).catchError((_) {});
+    f.writeAsString('$line\n', mode: FileMode.append, flush: false).ignore();
   }
 
   Future<void> _inject() async {
@@ -145,12 +150,14 @@ class _CommentProbePageState extends State<CommentProbePage> {
     final s = 'ws=$_wsCount frame=$_frameCount comment=$_commentCount';
     _status = s;
     _log('TICK $s');
-    _controller.runJavaScript(
-      "ProbeBridge.postMessage(JSON.stringify({t:'stats',ws:(window.__probe&&window.__probe.ws.length)||0,"
-      "hooked:!!window.__hookInstalled,types:window.__cdTypes||null,"
-      "video:(function(){var v=document.querySelector('video');"
-      "return v?{rs:v.readyState,w:v.videoWidth}:null})()}))",
-    ).catchError((_) {});
+    _controller
+        .runJavaScript(
+          "ProbeBridge.postMessage(JSON.stringify({t:'stats',ws:(window.__probe&&window.__probe.ws.length)||0,"
+          "hooked:!!window.__hookInstalled,types:window.__cdTypes||null,"
+          "video:(function(){var v=document.querySelector('video');"
+          "return v?{rs:v.readyState,w:v.videoWidth}:null})()}))",
+        )
+        .catchError((_) {});
   }
 
   void _finish() {
@@ -173,8 +180,10 @@ class _CommentProbePageState extends State<CommentProbePage> {
         children: [
           Padding(
             padding: const EdgeInsets.all(8),
-            child: Text('WS:$_wsCount  帧:$_frameCount  评论:$_commentCount',
-                style: const TextStyle(fontSize: 12)),
+            child: Text(
+              'WS:$_wsCount  帧:$_frameCount  评论:$_commentCount',
+              style: const TextStyle(fontSize: 12),
+            ),
           ),
           Expanded(
             // 变体 D：小视口 420x900 + 不透明遮盖（省内存，正式实现首选形态）
@@ -199,10 +208,14 @@ class _CommentProbePageState extends State<CommentProbePage> {
             height: 120,
             child: ListView(
               children: _recent
-                  .map((t) => Text(t,
+                  .map(
+                    (t) => Text(
+                      t,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 11)))
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                  )
                   .toList(),
             ),
           ),

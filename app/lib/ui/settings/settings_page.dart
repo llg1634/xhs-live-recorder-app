@@ -1,12 +1,14 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../app.dart';
 import '../../services/recording_manager.dart';
 import '../../services/storage_service.dart';
+import '../../theme/glass_palette.dart';
 import '../../theme/glass_tokens.dart';
 import '../widgets/feedback.dart';
 import '../widgets/glass_button.dart';
@@ -15,6 +17,7 @@ import '../widgets/glass_pill.dart';
 import '../widgets/glass_surface.dart';
 import '../widgets/pressable.dart';
 import '../widgets/storage_root_cache.dart';
+import 'app_settings.dart';
 
 /// 「设置」页：主题模式、存储根目录、最大并发数、关于。
 class SettingsPage extends StatefulWidget {
@@ -57,6 +60,8 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget build(BuildContext context) {
     final GlassColors c = GlassColors.of(context);
     final ThemeController themeController = context.watch<ThemeController>();
+    final AppSettingsController appSettings = context
+        .watch<AppSettingsController>();
     final int maxConcurrent = context.select<RecordingManager, int>(
       (RecordingManager m) => m.maxConcurrentTasks,
     );
@@ -65,6 +70,8 @@ class _SettingsPageState extends State<SettingsPage> {
     );
 
     return CustomScrollView(
+      key: const PageStorageKey<String>('settings-scroll'),
+      scrollCacheExtent: const ScrollCacheExtent.pixels(320),
       slivers: <Widget>[
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(
@@ -141,6 +148,47 @@ class _SettingsPageState extends State<SettingsPage> {
                               const SizedBox(height: 8),
                               Text(
                                 '深色 / 浅色均针对液态玻璃单独调校，可跟随系统自动切换。',
+                                style: GlassText.caption(
+                                  c,
+                                  color: c.textTertiary,
+                                ).copyWith(fontSize: 11.5),
+                              ),
+                              const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 14),
+                                child: GlassDivider(),
+                              ),
+                              Row(
+                                children: <Widget>[
+                                  const _RowIcon(
+                                    icon: Icons.color_lens_outlined,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Text(
+                                    '主题色',
+                                    style: GlassText.label(c)
+                                        .copyWith(fontSize: 14),
+                                  ),
+                                  const Spacer(),
+                                  Text(
+                                    themeController.palette.label,
+                                    style: GlassText.micro(
+                                      c,
+                                      color: c.accent,
+                                    ).copyWith(fontWeight: FontWeight.w700),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              _ThemePaletteChooser(
+                                selected: themeController.palette,
+                                onChanged: (GlassPalette palette) {
+                                  themeController.palette = palette;
+                                  HapticFeedback.selectionClick();
+                                },
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                '主题色同时作用于强调色、语义色、玻璃 tint 与背景光斑。',
                                 style: GlassText.caption(
                                   c,
                                   color: c.textTertiary,
@@ -229,6 +277,20 @@ class _SettingsPageState extends State<SettingsPage> {
                           title: '写入策略',
                           subtitle: '优先公共目录 Movies/直播录制，不可写时回退到应用私有目录。',
                         ),
+                        const GlassDivider(indent: 16, endIndent: 16),
+                        _InfoRow(
+                          icon: Icons.delete_sweep_outlined,
+                          title: '删除前二次确认',
+                          subtitle: '关闭后，左滑或长按删除录像会直接执行，不再弹确认框。',
+                          trailing: Switch.adaptive(
+                            value: appSettings.deleteConfirm,
+                            activeTrackColor: c.accent,
+                            onChanged: (bool value) {
+                              HapticFeedback.selectionClick();
+                              appSettings.deleteConfirm = value;
+                            },
+                          ),
+                        ),
                       ],
                     ),
                     const SizedBox(height: GlassTokens.gapXl),
@@ -257,11 +319,12 @@ class _SettingsPageState extends State<SettingsPage> {
                           value: '5s × 3',
                         ),
                         const GlassDivider(indent: 16, endIndent: 16),
-                        _InfoRow(
+                        const _InfoRow(
                           icon: Icons.public_rounded,
                           title: '支持平台',
-                          value: '小红书 · 抖音（即将）',
-                          denseValue: true,
+                          subtitle:
+                              '小红书 · 抖音（均已支持录制与弹幕）\n'
+                              '录制 FLV · 弹幕 JSONL + ASS 字幕',
                         ),
                       ],
                     ),
@@ -355,9 +418,10 @@ class _SettingsGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 设置页一次会出现多个分组面板，统一用更轻的 blurSm 控制首帧模糊层成本。
     return GlassSurface(
       radius: GlassTokens.radiusCard,
-      blur: GlassTokens.blur,
+      blur: GlassTokens.blurSm,
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -400,7 +464,6 @@ class _InfoRow extends StatelessWidget {
     this.value,
     this.valueColor,
     this.trailing,
-    this.denseValue = false,
     this.iconColor,
   });
 
@@ -411,7 +474,6 @@ class _InfoRow extends StatelessWidget {
   final String? value;
   final Color? valueColor;
   final Widget? trailing;
-  final bool denseValue;
   final Color? iconColor;
 
   @override
@@ -455,16 +517,11 @@ class _InfoRow extends StatelessWidget {
               padding: const EdgeInsets.only(top: 2),
               child: Text(
                 value!,
-                style: denseValue
-                    ? GlassText.caption(
-                        c,
-                        color: valueColor ?? c.textSecondary,
-                      ).copyWith(fontSize: 12)
-                    : GlassText.numeric(
-                        c,
-                        size: 14,
-                        color: valueColor ?? c.textPrimary,
-                      ),
+                style: GlassText.numeric(
+                  c,
+                  size: 14,
+                  color: valueColor ?? c.textPrimary,
+                ),
               ),
             ),
           ],
@@ -493,6 +550,132 @@ class _PathText extends StatelessWidget {
         c,
         color: color,
       ).copyWith(fontSize: 11.5, height: 1.4),
+    );
+  }
+}
+
+/// 一排主题色圆点：点选即时生效，并由 [ThemeController] 持久化。
+class _ThemePaletteChooser extends StatelessWidget {
+  const _ThemePaletteChooser({required this.selected, required this.onChanged});
+
+  final GlassPalette selected;
+  final ValueChanged<GlassPalette> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final GlassColors c = GlassColors.of(context);
+    final Brightness brightness = Theme.of(context).brightness;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(GlassTokens.radiusMd),
+        color: c.fieldFill,
+        border: Border.all(color: c.divider),
+      ),
+      child: Row(
+        children: <Widget>[
+          for (final GlassPalette palette in GlassPalette.values)
+            Expanded(
+              child: _PaletteDot(
+                palette: palette,
+                colors: GlassPalettes.colorsOf(palette, brightness),
+                selected: palette == selected,
+                onTap: () => onChanged(palette),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PaletteDot extends StatelessWidget {
+  const _PaletteDot({
+    required this.palette,
+    required this.colors,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final GlassPalette palette;
+  final GlassColors colors;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final GlassColors c = GlassColors.of(context);
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '主题色 ${palette.label}，${palette.description}',
+      child: Pressable(
+        onTap: onTap,
+        haptic: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            AnimatedContainer(
+              duration: GlassTokens.fast,
+              curve: GlassTokens.easeOut,
+              width: 34,
+              height: 34,
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: selected ? c.textPrimary : Colors.transparent,
+                  width: 1.5,
+                ),
+                boxShadow: selected
+                    ? <BoxShadow>[
+                        BoxShadow(
+                          color: colors.accent.withValues(alpha: 0.45),
+                          blurRadius: 12,
+                          offset: const Offset(0, 3),
+                        ),
+                      ]
+                    : null,
+              ),
+              child: Container(
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: <Color>[colors.accent, colors.accentAlt],
+                  ),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.5),
+                  ),
+                ),
+                child: selected
+                    ? const Icon(
+                        Icons.check_rounded,
+                        size: 16,
+                        color: Colors.white,
+                      )
+                    : null,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              palette.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style:
+                  GlassText.micro(
+                    c,
+                    color: selected ? c.textPrimary : c.textTertiary,
+                  ).copyWith(
+                    fontSize: 9.5,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                  ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

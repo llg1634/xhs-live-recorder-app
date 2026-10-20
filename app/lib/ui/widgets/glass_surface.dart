@@ -1,9 +1,11 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../theme/glass_tokens.dart';
+import 'glass_scroll_activity.dart';
 import 'pressable.dart';
 
 /// 液态玻璃基础面板。
@@ -123,21 +125,24 @@ class GlassSurface extends StatelessWidget {
       border = c.glassBorder;
     }
 
+    // 只有当前可见 Tab 会订阅滚动状态：隐藏页的 TickerMode 为 false，
+    // 不必跟着别页的滚动去重建自己的模糊层。
+    final ValueListenable<bool>? scrolling =
+        TickerMode.valuesOf(context).enabled
+        ? GlassScrollActivity.maybeOf(context)
+        : null;
+
     final Widget body = ClipRRect(
       borderRadius: innerBorderRadius,
       child: Stack(
         clipBehavior: Clip.hardEdge,
         children: <Widget>[
           Positioned.fill(
-            child: grouped
-                ? BackdropFilter.grouped(
-                    filter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-                    child: const SizedBox.expand(),
-                  )
-                : BackdropFilter(
-                    filter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-                    child: const SizedBox.expand(),
-                  ),
+            child: _GlassBackdropLayer(
+              blur: blur,
+              grouped: grouped,
+              scrolling: scrolling,
+            ),
           ),
           Positioned.fill(
             child: DecoratedBox(decoration: BoxDecoration(gradient: fill)),
@@ -160,7 +165,7 @@ class GlassSurface extends StatelessWidget {
                       end: Alignment.bottomCenter,
                       colors: <Color>[
                         Colors.transparent,
-                        (dark ? Colors.black : c.accentAlt).withValues(
+                        (dark ? Colors.black : c.glassTint).withValues(
                           alpha: dark ? 0.14 : 0.035,
                         ),
                       ],
@@ -199,6 +204,43 @@ class GlassSurface extends StatelessWidget {
     }
 
     return surface;
+  }
+}
+
+/// 模糊层：滚动中把 sigma 压到约 38%，停止后恢复。
+///
+/// 用 [ValueListenableBuilder] 只重建这一层，玻璃的渐变、描边、内容都不重建。
+class _GlassBackdropLayer extends StatelessWidget {
+  const _GlassBackdropLayer({
+    required this.blur,
+    required this.grouped,
+    this.scrolling,
+  });
+
+  final double blur;
+  final bool grouped;
+  final ValueListenable<bool>? scrolling;
+
+  @override
+  Widget build(BuildContext context) {
+    final ValueListenable<bool>? activity = scrolling;
+    if (activity == null) return _buildLayer(false);
+    return ValueListenableBuilder<bool>(
+      valueListenable: activity,
+      builder: (BuildContext context, bool isScrolling, Widget? child) =>
+          _buildLayer(isScrolling),
+    );
+  }
+
+  Widget _buildLayer(bool isScrolling) {
+    final double sigma = isScrolling ? math.max(4, blur * 0.38) : blur;
+    final ui.ImageFilter filter = ui.ImageFilter.blur(
+      sigmaX: sigma,
+      sigmaY: sigma,
+    );
+    return grouped
+        ? BackdropFilter.grouped(filter: filter, child: const SizedBox.expand())
+        : BackdropFilter(filter: filter, child: const SizedBox.expand());
   }
 }
 

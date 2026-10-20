@@ -1,18 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'glass_palette.dart';
 import 'glass_tokens.dart';
 
-/// 主题入口：液态玻璃的深/浅两套主题。
+/// 主题入口：液态玻璃的深/浅两套主题 × 6 套主题色。
 ///
 /// 玻璃质感本身由 `lib/ui/widgets/glass_*` 实现，这里只提供：
 /// Material 组件兜底配色、中文排版、路由过渡、SnackBar / 输入框等基础样式。
 class AppTheme {
   static const brand = Color(0xFFFF2455);
 
-  static ThemeData light() => _build(GlassColors.light);
+  static ThemeData light([GlassPalette palette = GlassPalette.pinkPurple]) =>
+      _build(GlassPalettes.colorsOf(palette, Brightness.light));
 
-  static ThemeData dark() => _build(GlassColors.dark);
+  static ThemeData dark([GlassPalette palette = GlassPalette.pinkPurple]) =>
+      _build(GlassPalettes.colorsOf(palette, Brightness.dark));
 
   static ThemeData _build(GlassColors c) {
     final bool dark = c.isDark;
@@ -58,6 +61,7 @@ class AppTheme {
       useMaterial3: true,
       brightness: c.brightness,
       colorScheme: scheme,
+      extensions: <ThemeExtension<dynamic>>[c],
       textTheme: text,
       primaryTextTheme: text,
       scaffoldBackgroundColor: c.canvasBottom,

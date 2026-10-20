@@ -87,7 +87,9 @@ class TaskCard extends StatelessWidget {
                 label: state.label,
                 color: tone,
                 dense: true,
-                leading: BreathingDot(color: tone, size: 6, active: pulsing),
+                leading: RepaintBoundary(
+                  child: BreathingDot(color: tone, size: 6, active: pulsing),
+                ),
               ),
               const Spacer(),
               if (active && onStop != null)
@@ -137,10 +139,13 @@ class TaskCard extends StatelessWidget {
           Row(
             children: <Widget>[
               Expanded(
-                child: SignalBar(
-                  color: tone,
-                  active: active && state != TaskState.resolving,
-                  height: 3,
+                // 信号条每帧重绘，独立成层，避免整张玻璃卡片跟着重绘。
+                child: RepaintBoundary(
+                  child: SignalBar(
+                    color: tone,
+                    active: active && state != TaskState.resolving,
+                    height: 3,
+                  ),
                 ),
               ),
               const SizedBox(width: 10),
