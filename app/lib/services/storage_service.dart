@@ -70,7 +70,10 @@ class StorageService {
     return dir;
   }
 
-  /// 列出已有录像目录（用于"录像管理"）。
+  /// 列出已有录像目录（用于"录像管理"），按录制开始时间**倒序**（最新在前）。
+  ///
+  /// 注意：不能直接按 path 字符串排序——目录名以 `xhs_` / `douyin_` 开头，
+  /// 字符串序会先按平台分组，导致"新的抖音"排在"旧的小红书"下面。
   Future<List<Directory>> listSessions() async {
     try {
       final base = await root();
@@ -79,10 +82,55 @@ class StorageService {
           .where((e) => e is Directory)
           .cast<Directory>()
           .toList();
-      entries.sort((a, b) => b.path.compareTo(a.path));
+
+      final times = <String, DateTime>{};
+      for (final dir in entries) {
+        final parsed = _parseStamp(p.basename(dir.path));
+        if (parsed != null) {
+          times[dir.path] = parsed;
+        } else {
+          try {
+            times[dir.path] = (await dir.stat()).modified;
+          } catch (_) {
+            times[dir.path] = DateTime.fromMillisecondsSinceEpoch(0);
+          }
+        }
+      }
+
+      entries.sort((a, b) {
+        final byTime = times[b.path]!.compareTo(times[a.path]!);
+        if (byTime != 0) return byTime;
+        return b.path.compareTo(a.path);
+      });
       return entries;
     } catch (_) {
       return const [];
+    }
+  }
+
+  /// 分段序号：`part01.flv` → 1；解析不出时退回文件名字符串。
+  static int _segmentIndex(String path) {
+    final m = RegExp(r'(\d+)\.flv$').firstMatch(p.basename(path));
+    if (m == null) return 1 << 30;
+    return int.tryParse(m.group(1)!) ?? (1 << 30);
+  }
+
+  /// 从目录名末尾解析 `yyyyMMdd-HHmmss` 时间戳。
+  static DateTime? _parseStamp(String name) {
+    final m = RegExp(r'(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$')
+        .firstMatch(name);
+    if (m == null) return null;
+    try {
+      return DateTime(
+        int.parse(m.group(1)!),
+        int.parse(m.group(2)!),
+        int.parse(m.group(3)!),
+        int.parse(m.group(4)!),
+        int.parse(m.group(5)!),
+        int.parse(m.group(6)!),
+      );
+    } catch (_) {
+      return null;
     }
   }
 
@@ -95,7 +143,8 @@ class StorageService {
           .cast<File>()
           .where((f) => f.path.toLowerCase().endsWith('.flv'))
           .toList();
-      files.sort((a, b) => a.path.compareTo(b.path));
+      // part2 要排在 part10 前面，所以按数字比较而不是字符串。
+      files.sort((a, b) => _segmentIndex(a.path).compareTo(_segmentIndex(b.path)));
       return files;
     } catch (_) {
       return const [];

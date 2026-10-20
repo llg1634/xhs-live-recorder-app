@@ -40,6 +40,27 @@ class _LibraryPageState extends State<LibraryPage> {
   int _generation = 0;
   DateTime? _lastLoaded;
 
+  /// 排序方式：最新录制在前（默认） / 最早录制在前。
+  bool _newestFirst = true;
+
+  void _applySort([List<SessionInfo>? target]) {
+    final list = target ?? _sessions;
+    list.sort((SessionInfo a, SessionInfo b) {
+      final int byTime = _newestFirst
+          ? b.startedAt.compareTo(a.startedAt)
+          : a.startedAt.compareTo(b.startedAt);
+      if (byTime != 0) return byTime;
+      return a.dir.path.compareTo(b.dir.path);
+    });
+  }
+
+  void _toggleSort() {
+    setState(() {
+      _newestFirst = !_newestFirst;
+      _applySort();
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -83,6 +104,7 @@ class _LibraryPageState extends State<LibraryPage> {
     final List<SessionInfo> sessions = dirs
         .map(SessionInfo.fromDirectory)
         .toList();
+    _applySort(sessions);
     setState(() {
       _sessions
         ..clear()
@@ -103,8 +125,7 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 
   Future<void> _enrichAll(
-    StorageService storage,
-    List<SessionInfo> sessions,
+    StorageService storage,    List<SessionInfo> sessions,
     int generation,
   ) async {
     final List<_SessionMeta> metas = await Future.wait(
@@ -332,11 +353,23 @@ class _LibraryPageState extends State<LibraryPage> {
                       radius: 14,
                       gradient: true,
                     ),
-                    trailing: GlassIconButton(
-                      icon: Icons.refresh_rounded,
-                      size: 40,
-                      semanticLabel: '刷新录像列表',
-                      onPressed: () => _load(silent: true, retryRoot: true),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        GlassPill(
+                          label: _newestFirst ? '最新在前' : '最早在前',
+                          icon: Icons.swap_vert_rounded,
+                          dense: true,
+                          onTap: _toggleSort,
+                        ),
+                        const SizedBox(width: 8),
+                        GlassIconButton(
+                          icon: Icons.refresh_rounded,
+                          size: 40,
+                          semanticLabel: '刷新录像列表',
+                          onPressed: () => _load(silent: true, retryRoot: true),
+                        ),
+                      ],
                     ),
                   ),
                 ),
