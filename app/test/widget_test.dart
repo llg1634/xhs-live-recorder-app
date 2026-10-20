@@ -1,30 +1,36 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:live_recorder/main.dart';
+import 'package:live_recorder/models/live_room.dart';
+import 'package:live_recorder/models/record_task.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  test('小红书 FLV 直链由房间号构造', () {
+    const room = LiveRoom(
+      platform: LivePlatform.xhs,
+      roomId: '570501740524334550',
+      pageUrl: 'https://www.xiaohongshu.com/livestream/570501740524334550',
+      rawInput: '',
+    );
+    expect(room.flvUrl,
+        'https://live-source-play.xhscdn.com/live/570501740524334550.flv');
+    expect(room.displayName, '小红书 570501740524334550');
+  });
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+  test('抖音房间不构造直链（需运行时解析签名地址）', () {
+    const room = LiveRoom(
+      platform: LivePlatform.douyin,
+      roomId: '675247105586',
+      pageUrl: 'https://live.douyin.com/675247105586',
+      rawInput: '',
+    );
+    expect(room.flvUrl, isEmpty);
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+  test('任务状态：只有录制/重连/解析算活跃', () {
+    expect(TaskState.recording.isActive, isTrue);
+    expect(TaskState.reconnecting.isActive, isTrue);
+    expect(TaskState.resolving.isActive, isTrue);
+    expect(TaskState.completed.isActive, isFalse);
+    expect(TaskState.stopped.isActive, isFalse);
+    expect(TaskState.error.isActive, isFalse);
   });
 }

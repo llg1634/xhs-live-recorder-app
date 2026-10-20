@@ -2,37 +2,1279 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no,viewport-fit=cover" />
+<meta name="format-detection" content="telephone=no,email=no,address=no" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#000000" />
 <title>{{TITLE}}</title>
 <style>
-  html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
-  video { width: 100%; height: 100%; object-fit: contain; background: #000; }
-  #tip { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
-         color: #9aa4b2; font: 14px -apple-system, "PingFang SC", sans-serif; text-align: center; }
+  :root{
+    --fg:#ffffff;
+    --dim:rgba(255,255,255,.60);
+    --line:rgba(255,255,255,.16);
+    --card:rgba(12,13,17,.62);
+    --accent:#ff2b52;
+    --ok:#31d07a;
+    --warn:#ffb020;
+    --bad:#ff5b52;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{
+    margin:0;padding:0;width:100%;height:100%;
+    background:#000;color:var(--fg);overflow:hidden;overscroll-behavior:none;
+    font:13px/1.45 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+    -webkit-text-size-adjust:100%;touch-action:manipulation;
+  }
+  #app{position:fixed;top:0;right:0;bottom:0;left:0;background:#000;overflow:hidden;}
+
+  /* 视频层：黑底 + 等比完整显示 */
+  .video{
+    position:absolute;top:0;right:0;bottom:0;left:0;
+    width:100%;height:100%;background:#000;
+    object-fit:contain;-o-object-fit:contain;
+    z-index:0;
+  }
+
+  /* 透明手势层：位于视频之上、控件之下。单击切控件，双击切全屏 */
+  .tapzone{position:absolute;top:0;right:0;bottom:0;left:0;z-index:1;background:rgba(0,0,0,0);}
+
+  /* ---------- 顶部状态 ---------- */
+  .topbar{
+    position:absolute;left:0;right:0;top:0;z-index:3;
+    display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;
+    padding:8px 10px 10px 12px;
+    padding-top:calc(8px + env(safe-area-inset-top,0px));
+    background:linear-gradient(to bottom,rgba(0,0,0,.66),rgba(0,0,0,0));
+    transition:opacity .18s ease;
+  }
+  .grow{-webkit-flex:1;flex:1;min-width:8px;}
+  .pill{
+    display:-webkit-inline-flex;display:inline-flex;-webkit-align-items:center;align-items:center;
+    max-width:66vw;padding:5px 10px;border-radius:999px;
+    background:var(--card);border:1px solid var(--line);
+    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+    font-size:12px;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--dim);-webkit-flex:0 0 auto;flex:0 0 auto;margin-right:6px;}
+  body.mode-live.phase-playing .dot{background:var(--accent);-webkit-animation:pulse 1.6s infinite;animation:pulse 1.6s infinite;}
+  body.mode-replay.phase-playing .dot{background:var(--ok);}
+  body.phase-reconnect .dot{background:var(--warn);-webkit-animation:pulse 1s infinite;animation:pulse 1s infinite;}
+  body.phase-error .dot{background:var(--bad);}
+  body.phase-stopped .dot{background:var(--bad);}
+  body.phase-ended .dot{background:var(--dim);}
+  @-webkit-keyframes pulse{0%,100%{opacity:1;-webkit-transform:scale(1);transform:scale(1)}50%{opacity:.35;-webkit-transform:scale(.82);transform:scale(.82)}}
+  @keyframes pulse{0%,100%{opacity:1;-webkit-transform:scale(1);transform:scale(1)}50%{opacity:.35;-webkit-transform:scale(.82);transform:scale(.82)}}
+
+  .cbtn{
+    width:36px;height:36px;margin-left:8px;padding:0;border-radius:11px;
+    display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;-webkit-justify-content:center;justify-content:center;
+    background:var(--card);border:1px solid var(--line);color:var(--fg);
+    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+    -webkit-appearance:none;appearance:none;outline:none;
+    transition:transform .12s ease,background .12s ease;
+  }
+  .cbtn:active{-webkit-transform:scale(.92);transform:scale(.92);background:rgba(48,50,60,.8);}
+  .cbtn svg{display:block;width:20px;height:20px;}
+
+  /* 图标状态切换（全部走 body 上的 class；选择器要盖过上面的 .cbtn svg） */
+  .cbtn svg{display:none;}
+  body.muted .cbtn svg.ico-sound-off{display:block;}
+  body:not(.muted) .cbtn svg.ico-sound-on{display:block;}
+  body.phase-playing .cbtn svg.ico-play-off{display:block;}
+  body:not(.phase-playing) .cbtn svg.ico-play-on{display:block;}
+  body.immersive .cbtn svg.ico-fs-off{display:block;}
+  body:not(.immersive) .cbtn svg.ico-fs-on{display:block;}
+
+  /* ---------- 中央状态层 ---------- */
+  .center{
+    position:absolute;top:0;right:0;bottom:0;left:0;z-index:4;
+    display:none;-webkit-flex-direction:column;flex-direction:column;
+    -webkit-align-items:center;align-items:center;-webkit-justify-content:center;justify-content:center;
+    padding:24px;text-align:center;background:rgba(0,0,0,.46);
+  }
+  .spin{
+    width:28px;height:28px;border-radius:50%;margin-bottom:12px;
+    border:2.5px solid rgba(255,255,255,.20);border-top-color:#fff;
+    -webkit-animation:spin .9s linear infinite;animation:spin .9s linear infinite;
+  }
+  @-webkit-keyframes spin{to{-webkit-transform:rotate(360deg);transform:rotate(360deg)}}
+  @keyframes spin{to{-webkit-transform:rotate(360deg);transform:rotate(360deg)}}
+  .ctitle{font-size:14px;font-weight:600;letter-spacing:.3px;}
+  body.phase-error .ctitle{color:var(--bad);}
+  .csub{margin-top:6px;font-size:12px;line-height:1.5;color:var(--dim);max-width:82vw;word-break:break-all;}
+  .bigbtn{
+    margin-top:16px;padding:9px 22px;border-radius:999px;font-size:13px;font-weight:600;
+    border:1px solid var(--line);background:rgba(255,255,255,.10);color:var(--fg);
+    -webkit-appearance:none;appearance:none;outline:none;
+  }
+  .bigbtn:active{-webkit-transform:scale(.96);transform:scale(.96);}
+  body.phase-error .bigbtn{border-color:rgba(255,91,82,.55);background:rgba(255,43,82,.18);color:#ff9a94;}
+  body.phase-stopped .ctitle{color:var(--bad);}
+  body.phase-stopped .bigbtn{border-color:rgba(255,91,82,.55);background:rgba(255,43,82,.18);color:#ff9a94;}
+
+  /* ---------- 回放控制条 ---------- */
+  .controls{
+    position:absolute;left:0;right:0;bottom:0;z-index:3;display:none;
+    -webkit-align-items:center;align-items:center;
+    padding:8px 10px;padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));
+    background:linear-gradient(to top,rgba(0,0,0,.78),rgba(0,0,0,0));
+    transition:opacity .18s ease;
+  }
+  body.mode-replay .controls{display:-webkit-flex;display:flex;}
+  .time{font-size:11px;color:rgba(255,255,255,.86);font-variant-numeric:tabular-nums;min-width:38px;text-align:center;}
+  .seekwrap{-webkit-flex:1;flex:1;display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;margin:0 8px;height:30px;}
+  input[type=range]{
+    -webkit-appearance:none;appearance:none;width:100%;height:4px;margin:0;padding:0;
+    border-radius:2px;background:rgba(255,255,255,.24);outline:none;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;appearance:none;width:13px;height:13px;border-radius:50%;
+    background:#fff;border:0;-webkit-box-shadow:0 0 0 3px rgba(255,43,82,.32);box-shadow:0 0 0 3px rgba(255,43,82,.32);
+  }
+  input[type=range].vol{width:64px;-webkit-flex:0 0 auto;flex:0 0 auto;margin-left:8px;}
+
+  /* ---------- 直播信息 / 提示 ---------- */
+  .meta{
+    position:absolute;left:12px;z-index:3;display:none;
+    bottom:calc(10px + env(safe-area-inset-bottom,0px));
+    font-size:11px;letter-spacing:.3px;color:rgba(255,255,255,.52);
+  }
+  body.mode-live .meta{display:block;}
+  .toast{
+    position:absolute;left:50%;z-index:5;opacity:0;pointer-events:none;
+    -webkit-transform:translateX(-50%);transform:translateX(-50%);
+    bottom:calc(62px + env(safe-area-inset-bottom,0px));
+    padding:6px 12px;border-radius:999px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:86vw;
+    background:rgba(12,13,17,.86);border:1px solid var(--line);font-size:12px;
+    transition:opacity .2s ease;
+  }
+  .toast.show{opacity:1;}
+
+  /* 沉浸式：隐藏页面自己的顶栏（交给 Flutter 的返回/标题条） */
+  body.immersive .topbar{display:none;}
+  /* 控件自动隐藏（长按/单击切换） */
+  body.ui-hidden .topbar,
+  body.ui-hidden .controls,
+  body.ui-hidden .meta{opacity:0;pointer-events:none;}
+
+  /* 横屏更紧凑 */
+  @media (orientation:landscape){
+    .cbtn{width:32px;height:32px;border-radius:9px;margin-left:6px;}
+    .cbtn svg{width:18px;height:18px;}
+    .pill{font-size:11px;padding:4px 9px;}
+    .controls{padding-top:6px;padding-bottom:calc(6px + env(safe-area-inset-bottom,0px));}
+    .meta{font-size:10px;}
+    .ctitle{font-size:13px;}
+  }
+  @media (orientation:portrait) and (max-width:400px){
+    .seekwrap{margin:0 6px;}
+    input[type=range].vol{width:48px;margin-left:4px;}
+  }
+
+  /* 无 Flutter 桥时的 CSS 全屏兜底（PC 浏览器调试用） */
+  body.standalone.immersive{background:#000;}
+  body.standalone.immersive #app{position:fixed;}
 </style>
 </head>
-<body>
-<video id="v" muted playsinline autoplay></video>
-<div id="tip">正在连接直播流…</div>
+<body class="mode-live phase-loading muted">
+<div id="app">
+  <video id="video" class="video" playsinline webkit-playsinline muted autoplay preload="auto" x5-video-player-type="h5-page" disablepictureinpicture></video>
+
+  <div id="tapzone" class="tapzone"></div>
+
+  <div id="topbar" class="topbar">
+    <div class="pill"><i class="dot"></i><span id="pillText">加载中…</span></div>
+    <div class="grow"></div>
+    <button id="btnMute" class="cbtn" type="button" aria-label="静音切换">
+      <svg class="ico-sound-on" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 9.5v5c0 .3.2.5.5.5H7l3.9 3.2c.3.2.7 0 .7-.4V6.7c0-.4-.4-.6-.7-.4L7 9.5H4.5c-.3 0-.5.2-.5.5z" fill="currentColor"/>
+        <path d="M14.6 8.6a4.4 4.4 0 0 1 0 6.8v-1.7a2.9 2.9 0 0 0 0-3.4V8.6z" fill="currentColor"/>
+        <path d="M16.9 5.9a7.6 7.6 0 0 1 0 12.2v-1.8a6 6 0 0 0 0-8.6V5.9z" fill="currentColor"/>
+      </svg>
+      <svg class="ico-sound-off" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 9.5v5c0 .3.2.5.5.5H7l3.9 3.2c.3.2.7 0 .7-.4V6.7c0-.4-.4-.6-.7-.4L7 9.5H4.5c-.3 0-.5.2-.5.5z" fill="currentColor"/>
+        <path d="m14.6 10.4 1.2-1.2 1.4 1.4 1.4-1.4 1.2 1.2-1.4 1.4 1.4 1.4-1.2 1.2-1.4-1.4-1.4 1.4-1.2-1.2 1.4-1.4z" fill="currentColor"/>
+      </svg>
+    </button>
+    <button id="btnFull" class="cbtn" type="button" aria-label="全屏">
+      <svg class="ico-fs-on" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm14 0h2v6h-6v-2h4v-4z" fill="currentColor"/>
+      </svg>
+      <svg class="ico-fs-off" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M9 4v5H4v2h7V4H9zm6 0h-2v7h7V9h-5V4zM4 15v2h5v5h2v-7H4zm16 0h-7v7h2v-5h5v-2z" fill="currentColor"/>
+      </svg>
+    </button>
+  </div>
+
+  <div id="center" class="center">
+    <div id="spin" class="spin"></div>
+    <div id="ctitle" class="ctitle">正在连接直播流…</div>
+    <div id="csub" class="csub"></div>
+    <button id="btnRetry" class="bigbtn" type="button">重试</button>
+  </div>
+
+  <div id="controls" class="controls">
+    <button id="btnPlay" class="cbtn" type="button" aria-label="播放/暂停">
+      <svg class="ico-play-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7V5z" fill="currentColor"/></svg>
+      <svg class="ico-play-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7V5zm6 0h4v14h-4V5z" fill="currentColor"/></svg>
+    </button>
+    <span id="tNow" class="time">00:00</span>
+    <div class="seekwrap"><input id="seek" type="range" min="0" max="1000" step="1" value="0" aria-label="进度" /></div>
+    <span id="tTotal" class="time">00:00</span>
+    <button id="btnMute2" class="cbtn" type="button" aria-label="静音切换">
+      <svg class="ico-sound-on" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 9.5v5c0 .3.2.5.5.5H7l3.9 3.2c.3.2.7 0 .7-.4V6.7c0-.4-.4-.6-.7-.4L7 9.5H4.5c-.3 0-.5.2-.5.5z" fill="currentColor"/>
+        <path d="M14.6 8.6a4.4 4.4 0 0 1 0 6.8v-1.7a2.9 2.9 0 0 0 0-3.4V8.6z" fill="currentColor"/>
+      </svg>
+      <svg class="ico-sound-off" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 9.5v5c0 .3.2.5.5.5H7l3.9 3.2c.3.2.7 0 .7-.4V6.7c0-.4-.4-.6-.7-.4L7 9.5H4.5c-.3 0-.5.2-.5.5z" fill="currentColor"/>
+        <path d="m14.6 10.4 1.2-1.2 1.4 1.4 1.4-1.4 1.2 1.2-1.4 1.4 1.4 1.4-1.2 1.2-1.4-1.4-1.4 1.4-1.2-1.2 1.4-1.4z" fill="currentColor"/>
+      </svg>
+    </button>
+    <input id="vol" class="vol" type="range" min="0" max="100" step="1" value="100" aria-label="音量" />
+  </div>
+
+  <div id="meta" class="meta"></div>
+  <div id="toast" class="toast"></div>
+</div>
+
+<!-- 服务端渲染时替换的模板变量：这里放在 data-* 属性里，服务端 htmlEscape 后的实体由 HTML 解析器还原，避免引号/& 破坏 JS 字符串 -->
+<div id="cfg" data-src="{{SRC}}" data-title="{{TITLE}}" hidden></div>
+
 <script src="flv.min.js"></script>
 <script>
 (function () {
-  var src = "{{SRC}}";
-  var video = document.getElementById('v');
-  var tip = document.getElementById('tip');
-  if (!src) { tip.textContent = '缺少播放地址'; return; }
-  if (flvjs.isSupported()) {
-    var player = flvjs.createPlayer({ type: 'flv', isLive: true, url: src }, {
-      enableWorker: false, enableStashBuffer: false, stashInitialSize: 128, autoCleanupSourceBuffer: true
-    });
-    player.attachMediaElement(video);
-    player.load();
-    player.play().catch(function () {});
-    player.on(flvjs.Events.ERROR, function (e) { tip.textContent = '播放错误：' + e; });
-    video.addEventListener('playing', function () { tip.style.display = 'none'; });
-  } else {
-    tip.textContent = '当前 WebView 不支持 MSE';
+  'use strict';
+
+  /* ===================== 常量 ===================== */
+  var RECONNECT_DELAY = 2000;       // 断流后 2 秒重连（无限次）
+  var STALL_TIMEOUT = 6000;         // 播放中 6 秒无新数据 → 视为断流
+  var FREEZE_SECONDS = 5;           // 有新数据但画面 5 秒不前进 → 流损坏/编码不支持，重连
+  var LOADING_TIMEOUT = 8000;       // 8 秒还不出画面（或收不到媒体数据）→ 重连
+  var STOPPED_RETRY_DELAY = 8000;   // /live 返回 404（录制已停止）后的慢速探测间隔
+  var REPORT_INTERVAL = 400;        // 状态上报节流（毫秒）
+  var TAP_DELAY = 280;              // 单击/双击判定窗口
+  var HINT_MS = 5200;               // 提示自动消失
+  var RETRY_HINT_AFTER = 12;        // 重连这么多次后提示“直播可能已结束”
+  var MAX_DIAG_ERRORS = 6;          // PV.diag() 保留的最近错误条数
+
+  /* ===================== 配置与工具 ===================== */
+  function $(id) { return document.getElementById(id); }
+
+  var cfgEl = $('cfg');
+  var SRC = cfgEl ? (cfgEl.getAttribute('data-src') || '') : '';
+  var TITLE = cfgEl ? (cfgEl.getAttribute('data-title') || '') : '';
+  /* 回放：src 形如 /file?path=...；直播：src 形如 /live/<taskId>.flv */
+  var IS_REPLAY = SRC.indexOf('/file') >= 0;
+
+  /* 直播：服务端现在直接 tail 正在写入的 part 文件，从字节 0 起就是完整合法 FLV
+     （不再有 prelude 拼接），所以 src 原样使用，不加任何查询参数。 */
+
+  var elVideo = $('video');
+  var elTap = $('tapzone');
+  var elPillText = $('pillText');
+  var elCenter = $('center');
+  var elSpin = $('spin');
+  var elCTitle = $('ctitle');
+  var elCSub = $('csub');
+  var elRetry = $('btnRetry');
+  var elControls = $('controls');
+  var elPlay = $('btnPlay');
+  var elSeek = $('seek');
+  var elNow = $('tNow');
+  var elTotal = $('tTotal');
+  var elVol = $('vol');
+  var elMeta = $('meta');
+  var elToast = $('toast');
+  var btnsMute = [];
+  var b1 = $('btnMute'), b2 = $('btnMute2');
+  if (b1) btnsMute.push(b1);
+  if (b2) btnsMute.push(b2);
+  var btnFull = $('btnFull');
+
+  function errText(e) {
+    if (!e) return '未知错误';
+    if (typeof e === 'string') return e;
+    if (e.message) return String(e.message);
+    return String(e);
   }
+
+  function fmtTime(sec) {
+    var t = Number(sec);
+    if (!isFinite(t) || t < 0) t = 0;
+    t = Math.floor(t);
+    var h = Math.floor(t / 3600);
+    var m = Math.floor((t % 3600) / 60);
+    var s = t % 60;
+    function pad(n) { return n < 10 ? '0' + n : '' + n; }
+    return (h > 0 ? h + ':' + pad(m) : pad(m)) + ':' + pad(s);
+  }
+
+  function isFiniteNumber(v) {
+    return typeof v === 'number' && isFinite(v) && !isNaN(v);
+  }
+
+  /* ===================== Flutter 桥 ===================== */
+  function hasBridge() {
+    try {
+      if (window.PlayerBridge && typeof window.PlayerBridge.postMessage === 'function') return true;
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.PlayerBridge) return true;
+      if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) return true;
+    } catch (e) {}
+    return false;
+  }
+
+  function post(obj) {
+    var msg;
+    try { msg = JSON.stringify(obj); } catch (e) { return; }
+    try {
+      if (window.PlayerBridge && typeof window.PlayerBridge.postMessage === 'function') {
+        window.PlayerBridge.postMessage(msg);
+        return;
+      }
+    } catch (e) {}
+    try {
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.PlayerBridge) {
+        window.webkit.messageHandlers.PlayerBridge.postMessage(msg);
+        return;
+      }
+    } catch (e) {}
+    try {
+      if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {
+        window.chrome.webview.postMessage(msg);
+        return;
+      }
+    } catch (e) {}
+    /* 独立浏览器（PC 调试）时无桥，静默丢弃 */
+  }
+
+  /* ===================== 状态 ===================== */
+  var st = {
+    mode: IS_REPLAY ? 'replay' : 'live',
+    phase: 'loading',   // loading | playing | paused | reconnect | ended | error
+    muted: true,
+    volume: 1,
+    retry: 0,
+    bitrate: 0,         // kbps
+    speedKBps: 0,       // flv.js statistics 的载入速度（KB/s），0 表示上游没新数据
+    width: 0,
+    height: 0,
+    position: 0,
+    duration: 0,
+    buffered: 0,
+    loaded: false,
+    immersive: false,
+    message: ''
+  };
+
+  var needsTap = false;      // 自动播放被拦截，等待用户点一下
+  var uiHidden = false;
+  var standalone = !hasBridge();
+  var lastReportAt = 0;
+
+  function report(force) {
+    var now = Date.now();
+    if (!force && now - lastReportAt < REPORT_INTERVAL) return;
+    lastReportAt = now;
+    post({
+      type: 'state',
+      v: 1,
+      state: st.phase,
+      phase: st.phase,
+      mode: st.mode,
+      muted: st.muted,
+      volume: Math.round(st.volume * 100) / 100,
+      retry: st.retry,
+      bitrate: st.bitrate,
+      speedKBps: Math.round(st.speedKBps),
+      width: st.width,
+      height: st.height,
+      position: Math.round(st.position * 10) / 10,
+      duration: Math.round(st.duration * 10) / 10,
+      buffered: Math.round(st.buffered * 10) / 10,
+      loaded: st.loaded,
+      immersive: st.immersive,
+      message: st.message || ''
+    });
+  }
+
+  /* ===================== 播放器生命周期 ===================== */
+  var player = null;
+  var reconnectTimer = null;
+  var stallTimer = null;
+  var tickTimer = null;
+  var hideTimer = null;
+  var toastTimer = null;
+  var tapTimer = null;
+  var lastTapAt = 0;
+  var lastDataAt = 0;
+  var lastMediaInfoAt = 0;
+  var startAt = 0;
+  var stoppedRetryTimer = null;
+  var errorLog = [];   // 最近几次错误，供 PV.diag() 远程定位
+  var freezeCount = 0;
+  var lastCurrentTime = -1;
+  var lastTime = 0;
+  var tearingDown = false;
+  var destroyed = false;
+  var dragging = false;
+
+  function stateText() {
+    if (st.phase === 'reconnect') return '重连中' + (st.retry > 0 ? '（第 ' + st.retry + ' 次）' : '');
+    if (st.phase === 'loading') {
+      if (st.retry > 0) return '重连中（第 ' + st.retry + ' 次）';
+      return IS_REPLAY ? '加载中…' : '正在连接…';
+    }
+    if (st.phase === 'playing') return IS_REPLAY ? '播放中' : '直播中';
+    if (st.phase === 'paused') return '已暂停';
+    if (st.phase === 'ended') return '播放结束';
+    if (st.phase === 'stopped') return '录制已停止';
+    return '播放错误';
+  }
+
+  function applyUI() {
+    var cls = 'mode-' + st.mode + ' phase-' + st.phase;
+    if (st.muted) cls += ' muted';
+    if (st.immersive) cls += ' immersive';
+    if (uiHidden) cls += ' ui-hidden';
+    if (standalone) cls += ' standalone';
+    document.body.className = cls;
+
+    if (elPillText) elPillText.textContent = stateText();
+
+    /* 中央层 */
+    var showCenter = st.phase === 'loading' || st.phase === 'reconnect' ||
+      st.phase === 'error' || st.phase === 'ended' || st.phase === 'stopped' || needsTap;
+    if (elCenter) elCenter.style.display = showCenter ? 'flex' : 'none';
+    if (showCenter) {
+      if (elSpin) elSpin.style.display = (st.phase === 'loading' || st.phase === 'reconnect') ? 'block' : 'none';
+      if (elCTitle) {
+        if (needsTap) elCTitle.textContent = '点击开始播放';
+        else if (st.phase === 'loading') elCTitle.textContent = IS_REPLAY ? '正在加载录像…' : '正在连接直播流…';
+        else if (st.phase === 'reconnect') elCTitle.textContent = '连接中断，正在重连…';
+        else if (st.phase === 'ended') elCTitle.textContent = '播放结束';
+        else if (st.phase === 'stopped') elCTitle.textContent = '录制已停止';
+        else elCTitle.textContent = '播放出错';
+      }
+      if (elCSub) {
+        var sub = '';
+        if (needsTap) sub = '浏览器策略要求用户交互后才能播放';
+        else if (st.phase === 'reconnect') {
+          sub = Math.round(RECONNECT_DELAY / 1000) + ' 秒后自动重试';
+          if (st.retry >= RETRY_HINT_AFTER) sub += ' · 直播可能已结束，仍会继续重试';
+          if (st.message) sub += '\n' + st.message;
+        } else if (st.phase === 'error' || st.phase === 'stopped') {
+          sub = st.message || '';
+          if (st.phase === 'stopped') {
+            sub += '\n每 ' + Math.round(STOPPED_RETRY_DELAY / 1000) + ' 秒自动检测录制是否恢复';
+          }
+        }
+        elCSub.textContent = sub;
+        elCSub.style.display = sub ? 'block' : 'none';
+      }
+      if (elRetry) {
+        var showRetry = st.phase === 'error' || st.phase === 'ended' || st.phase === 'stopped' ||
+          (st.phase === 'reconnect' && st.retry >= RETRY_HINT_AFTER);
+        elRetry.style.display = showRetry ? 'inline-block' : 'none';
+        if (st.phase === 'stopped') elRetry.textContent = '重新检测';
+        else elRetry.textContent = (st.phase === 'reconnect' || st.phase === 'ended') ? '立即重试' : '重试';
+      }
+    }
+
+    /* 回放控制条 */
+    if (elControls) elControls.style.display = IS_REPLAY ? 'flex' : 'none';
+
+    /* 音量条 */
+    if (elVol) elVol.value = String(Math.round(st.volume * 100));
+
+    /* 直播信息 */
+    if (elMeta) {
+      if (IS_REPLAY) {
+        elMeta.textContent = '';
+      } else {
+        var parts = [];
+        if (st.width > 0 && st.height > 0) parts.push(st.width + '×' + st.height);
+        if (st.bitrate > 0) parts.push((st.bitrate / 1000).toFixed(2) + ' Mbps');
+        parts.push('实时');
+        elMeta.textContent = parts.join(' · ');
+      }
+    }
+  }
+
+  function showToast(text) {
+    if (!elToast) return;
+    elToast.textContent = text;
+    elToast.className = 'toast show';
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      elToast.className = 'toast';
+      toastTimer = null;
+    }, HINT_MS);
+  }
+
+  function setUIHidden(hidden, autoHide) {
+    uiHidden = !!hidden;
+    applyUI();
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+    if (!uiHidden && autoHide) {
+      hideTimer = setTimeout(function () {
+        hideTimer = null;
+        if (st.immersive) setUIHidden(true, false);
+      }, 4000);
+    }
+  }
+
+  function stopPlayer() {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    if (!player) return;
+    tearingDown = true;
+    var p = player;
+    player = null;
+    try { p.destroy(); } catch (e) {}
+    try {
+      elVideo.pause();
+      elVideo.removeAttribute('src');
+      elVideo.load();
+    } catch (e) {}
+    freezeCount = 0;
+    lastCurrentTime = -1;
+    /* 销毁时 pause/emptied 等事件是异步派发的，等一拍再放开 */
+    setTimeout(function () { tearingDown = false; }, 40);
+  }
+
+  function clearStoppedRetry() {
+    if (stoppedRetryTimer) { clearTimeout(stoppedRetryTimer); stoppedRetryTimer = null; }
+  }
+
+  function pushError(entry) {
+    errorLog.push(entry);
+    while (errorLog.length > MAX_DIAG_ERRORS) errorLog.shift();
+  }
+
+  /* flv.js 的错误分类 → 给用户/远端定位的中文原因 */
+  function classifyError(type, detail) {
+    var t = String(type || '');
+    var d = String(detail || '');
+    if (/HttpStatusCodeInvalid/i.test(d) || /HttpStatusCodeInvalid/i.test(t)) {
+      return '播放地址返回错误状态码（/live 可能已停止）';
+    }
+    if (/CodecUnsupported/i.test(d) || /CodecUnsupported/i.test(t)) {
+      return '解码失败：编码不支持（flv.js 仅支持 H.264/AAC，该流可能是 H.265）';
+    }
+    if (/MediaMSEError|MediaSource/i.test(t)) {
+      return 'MSE 播放错误：' + (d || t);
+    }
+    if (/EarlyEof|UnrecoverableEarlyEof/i.test(d)) {
+      return '上游数据中断（EarlyEof）';
+    }
+    if (/NetworkException|NetworkError|LoaderError/i.test(d) || /NetworkError/i.test(t)) {
+      return '网络错误：' + (d || t);
+    }
+    return '播放错误：' + t + (d ? ' / ' + d : '');
+  }
+
+  /* 探测 /live 状态：404 → 录制已停止；200 → 可以重连；null → 网络失败 */
+  function probeLiveStatus(callback) {
+    var done = false;
+    var ac = null;
+    function finish(status) {
+      if (done) return;
+      done = true;
+      callback(status);
+    }
+    try {
+      ac = new AbortController();
+      fetch(SRC, { method: 'GET', cache: 'no-store', signal: ac.signal })
+        .then(function (resp) {
+          try { if (resp.body && resp.body.cancel) resp.body.cancel(); } catch (e) {}
+          try { ac.abort(); } catch (e) {}
+          finish(resp.status);
+        })
+        .catch(function () { finish(null); });
+      setTimeout(function () { try { ac.abort(); } catch (e) {} }, 1500);
+    } catch (e) {
+      finish(null);
+    }
+  }
+
+  /* 录制已停止：不无限转圈，明确提示 + 慢速自动检测恢复 */
+  function showStopped(message) {
+    stopPlayer();
+    st.phase = 'stopped';
+    st.message = message || '录制已停止';
+    st.speedKBps = 0;
+    needsTap = false;
+    applyUI();
+    report(true);
+    post({ type: 'stopped', message: st.message });
+    clearStoppedRetry();
+    stoppedRetryTimer = setTimeout(function () {
+      stoppedRetryTimer = null;
+      if (destroyed || st.phase !== 'stopped') return;
+      probeLiveStatus(function (status) {
+        if (destroyed) return;
+        if (status === 200) {
+          st.retry = 0;
+          start();
+        } else {
+          showStopped(st.message);
+        }
+      });
+    }, STOPPED_RETRY_DELAY);
+  }
+
+  function fatal(message) {
+    stopPlayer();
+    clearStoppedRetry();
+    st.phase = 'error';
+    st.message = message || '未知错误';
+    st.retry = 0;
+    st.speedKBps = 0;
+    needsTap = false;
+    applyUI();
+    report(true);
+    post({ type: 'error', message: st.message });
+  }
+
+  function scheduleReconnect(reason) {
+    if (destroyed) return;
+    if (IS_REPLAY) { fatal(reason || '回放加载失败'); return; }
+    if (reconnectTimer) return;           // 已经在等下一轮
+    clearStoppedRetry();
+    stopPlayer();
+    st.phase = 'reconnect';
+    st.retry += 1;
+    st.message = reason || '';
+    needsTap = false;
+    applyUI();
+    report(true);
+    reconnectTimer = setTimeout(function () {
+      reconnectTimer = null;
+      if (destroyed) return;
+      start();
+    }, RECONNECT_DELAY);
+  }
+
+  function safePlay() {
+    var p = null;
+    try { p = elVideo.play(); } catch (e) { return; }
+    if (!p || typeof p.then !== 'function') return;
+    p.then(function () {
+      if (needsTap) {
+        needsTap = false;
+        applyUI();
+      }
+    }).catch(function (err) {
+      var name = (err && err.name) || '';
+      if (name === 'NotAllowedError') {
+        needsTap = true;
+        applyUI();
+        report(true);
+      }
+      /* AbortError（频繁重连打断 play）等直接忽略 */
+    });
+  }
+
+  function setMuted(muted) {
+    st.muted = !!muted;
+    /* 只切 muted 属性，不改 volume，避免把用户调好的音量吃掉 */
+    try { elVideo.muted = st.muted; } catch (e) {}
+    applyUI();
+    report(true);
+  }
+
+  function start() {
+    if (destroyed) return;
+    clearStoppedRetry();
+    stopPlayer();
+    st.phase = 'loading';
+    st.message = '';
+    st.loaded = false;
+    st.speedKBps = 0;
+    needsTap = false;
+    startAt = Date.now();
+    lastDataAt = Date.now();
+    lastMediaInfoAt = 0;
+    freezeCount = 0;
+    lastCurrentTime = -1;
+    applyUI();
+    report(true);
+
+    if (!SRC) { fatal('缺少播放地址（src 为空）'); return; }
+    if (!window.flvjs) { fatal('flv.min.js 未加载成功'); return; }
+    if (typeof window.flvjs.isSupported === 'function' && !window.flvjs.isSupported()) {
+      fatal('当前 WebView 不支持 MSE，无法播放 FLV');
+      return;
+    }
+    try {
+      createPlayer();
+    } catch (e) {
+      fatal('播放器初始化失败：' + errText(e));
+    }
+  }
+
+  function createPlayer() {
+    var ds = {
+      type: 'flv',
+      url: SRC,
+      isLive: !IS_REPLAY,
+      cors: true,
+      withCredentials: false,
+      hasAudio: true,
+      hasVideo: true
+    };
+    var conf;
+    if (IS_REPLAY) {
+      /* 回放：尽快把整个文件缓进 MSE（本地 Range 很快），
+         同时限制最多保留回看 10 分钟，避免长录像把 SourceBuffer 配额吃光 */
+      conf = {
+        enableWorker: false,
+        enableStashBuffer: true,
+        lazyLoad: false,
+        autoCleanupSourceBuffer: true,
+        autoCleanupMaxBackwardDuration: 600,
+        autoCleanupMinBackwardDuration: 300,
+        accurateSeek: true,
+        seekType: 'range'
+      };
+    } else {
+      /* 直播：不攒 stash，丢弃过期缓存，主线程解析（WebView 里更稳） */
+      conf = {
+        enableWorker: false,
+        enableStashBuffer: false,
+        stashInitialSize: 128,
+        autoCleanupSourceBuffer: true,
+        lazyLoad: false,
+        fixAudioTimestampGap: false
+      };
+    }
+
+    player = window.flvjs.createPlayer(ds, conf);
+    var E = window.flvjs.Events;
+    player.on(E.ERROR, onPlayerError);
+    player.on(E.MEDIA_INFO, onMediaInfo);
+    player.on(E.STATISTICS_INFO, onStatistics);
+    player.on(E.METADATA_ARRIVED, function () { lastDataAt = Date.now(); });
+    player.on(E.LOADING_COMPLETE, function () {
+      st.loaded = true;
+      lastDataAt = Date.now();
+      report(true);
+      if (!IS_REPLAY) {
+        /* 直播流不应“正常结束”：服务端断开/分段结束 → 直接重连拉新数据 */
+        scheduleReconnect('上游数据结束');
+      }
+    });
+    player.on(E.RECOVERED_EARLY_EOF, function () {
+      /* 直播读到 EOF：上游分段结束，直接重连拉新分段 */
+      lastDataAt = Date.now();
+    });
+
+    player.attachMediaElement(elVideo);
+    player.load();
+    safePlay();
+  }
+
+  function onPlayerError(type, detail, info) {
+    if (tearingDown) return;
+    var t = String(type || 'Error');
+    var d = String(detail || '');
+    var text = classifyError(t, d);
+    pushError({ t: Date.now(), phase: st.phase, retry: st.retry, type: t, detail: d });
+    if (IS_REPLAY) {
+      fatal('回放失败：' + text);
+      return;
+    }
+    /* 直播：先确认 /live 是否 404（录制已停止），再决定重连还是显示停止 */
+    probeLiveStatus(function (status) {
+      if (destroyed) return;
+      if (status === 404) {
+        showStopped('录制已停止（/live 返回 404）');
+        return;
+      }
+      scheduleReconnect(text);
+    });
+  }
+
+  function onMediaInfo(info) {
+    if (!info) return;
+    if (info.width > 0) st.width = info.width;
+    if (info.height > 0) st.height = info.height;
+    lastMediaInfoAt = Date.now();
+    lastDataAt = Date.now();
+    applyUI();
+    report(true);
+  }
+
+  function onStatistics(info) {
+    lastDataAt = Date.now();
+    if (!info) return;
+    if (isFiniteNumber(info.speed)) {
+      st.speedKBps = info.speed;
+      var kbps = Math.round(info.speed * 8);
+      if (kbps > 0 || st.bitrate > 0) st.bitrate = kbps;
+    }
+    applyUI();
+    report(false);
+  }
+
+  /* ===================== 回放进度条 ===================== */
+  function bufferedRange() {
+    try {
+      var b = elVideo.buffered;
+      if (b && b.length > 0) return { start: b.start(0), end: b.end(b.length - 1) };
+    } catch (e) {}
+    return { start: 0, end: 0 };
+  }
+
+  function bufferedEnd() {
+    return bufferedRange().end;
+  }
+
+  /* FLV 带 keyframes 索引时 flv.js 才能做 Range 跳转；否则只能在已缓存区间内跳 */
+  function playerSeekable() {
+    try {
+      if (!IS_REPLAY || !player) return false;
+      var mi = player.mediaInfo;
+      if (mi) {
+        if (typeof mi.isSeekable === 'function') return !!mi.isSeekable();
+        if (mi.hasKeyframesIndex === true) return true;
+      }
+      var inner = player._mediaInfo;
+      if (inner && typeof inner.isSeekable === 'function') return !!inner.isSeekable();
+    } catch (e) {}
+    return false;
+  }
+
+  function knownDuration() {
+    var d = elVideo.duration;
+    if (isFiniteNumber(d) && d > 0) return d;
+    return bufferedEnd();
+  }
+
+  function setSeekFill(ratio) {
+    if (!elSeek) return;
+    var pct = Math.max(0, Math.min(100, ratio * 100));
+    var filled = 'rgba(255,43,82,.92)';
+    var empty = 'rgba(255,255,255,.24)';
+    var grad = 'linear-gradient(to right,' + filled + ' 0%,' + filled + ' ' + pct + '%,' +
+      empty + ' ' + pct + '%,' + empty + ' 100%)';
+    elSeek.style.background = grad;
+  }
+
+  function updateReplayUI() {
+    if (!IS_REPLAY) return;
+    var pos = isFiniteNumber(elVideo.currentTime) ? elVideo.currentTime : 0;
+    var dur = knownDuration();
+    var be = bufferedEnd();
+    st.position = pos;
+    st.duration = dur;
+    st.buffered = be;
+
+    var max = Math.max(dur, be, 1);
+    if (!dragging) {
+      var ratio = Math.max(0, Math.min(1, pos / max));
+      if (elSeek) elSeek.value = String(Math.round(ratio * 1000));
+      setSeekFill(ratio);
+      if (elNow) elNow.textContent = fmtTime(pos);
+      if (elTotal) {
+        var full = st.loaded || (isFiniteNumber(elVideo.duration) && elVideo.duration > 0);
+        elTotal.textContent = full ? fmtTime(max) : '缓存 ' + fmtTime(be);
+      }
+    }
+  }
+
+  function commitSeek() {
+    if (!IS_REPLAY) return;
+    var max = Math.max(knownDuration(), bufferedEnd(), 1);
+    var ratio = parseInt(elSeek.value, 10) / 1000;
+    var target = ratio * max;
+    var be = bufferedRange();
+    var seekable = playerSeekable() || (isFiniteNumber(elVideo.duration) && elVideo.duration > 0);
+    if (!seekable && be.end > 0) {
+      if (target > be.end - 0.4) {
+        target = Math.max(0, be.end - 0.4);
+        showToast('该位置还没缓存完，已跳到 ' + fmtTime(target));
+      } else if (target < be.start + 0.2) {
+        target = be.start + 0.2;
+        showToast('更早的缓存已清理，已跳到 ' + fmtTime(target));
+      }
+    }
+    if (isFiniteNumber(elVideo.duration) && elVideo.duration > 0 && target > elVideo.duration - 0.2) {
+      target = elVideo.duration - 0.2;
+    }
+    if (target < 0) target = 0;
+    try {
+      elVideo.currentTime = target;
+    } catch (e) {
+      showToast('当前无法跳转');
+    }
+    dragging = false;
+    if (elVideo.paused) safePlay();
+    updateReplayUI();
+  }
+
+  /* ===================== 视频事件 ===================== */
+  function onVideoEvent(name) {
+    return function () {
+      if (name === 'playing') {
+        lastDataAt = Date.now();
+        lastTime = elVideo.currentTime;
+        st.phase = 'playing';
+        needsTap = false;
+        applyUI();
+        report(true);
+      } else if (name === 'waiting') {
+        lastDataAt = Date.now();
+      } else if (name === 'timeupdate') {
+        var t = elVideo.currentTime;
+        if (isFiniteNumber(t) && Math.abs(t - lastTime) > 0.001) {
+          lastTime = t;
+          lastDataAt = Date.now();
+        }
+        updateReplayUI();
+        report(false);
+      } else if (name === 'progress') {
+        lastDataAt = Date.now();
+        if (IS_REPLAY) updateReplayUI();
+      } else if (name === 'pause') {
+        if (IS_REPLAY && !destroyed && !tearingDown && player) {
+          st.phase = 'paused';
+          applyUI();
+          report(true);
+        }
+      } else if (name === 'ended') {
+        if (IS_REPLAY && !tearingDown && player) {
+          st.phase = 'ended';
+          st.position = knownDuration();
+          applyUI();
+          report(true);
+        }
+      } else if (name === 'error') {
+        if (tearingDown) return;
+        if (IS_REPLAY) fatal('视频解码错误');
+        else scheduleReconnect('视频解码错误');
+      } else if (name === 'volumechange') {
+        st.muted = !!elVideo.muted;
+        st.volume = isFiniteNumber(elVideo.volume) ? elVideo.volume : 1;
+        applyUI();
+        report(true);
+      } else if (name === 'seeked') {
+        updateReplayUI();
+        report(true);
+      }
+    };
+  }
+
+  var videoEvents = ['playing', 'waiting', 'timeupdate', 'progress', 'pause', 'ended', 'error', 'volumechange', 'seeked'];
+  for (var vi = 0; vi < videoEvents.length; vi++) {
+    (function (name) {
+      var fn = onVideoEvent(name);
+      elVideo.addEventListener(name, fn, false);
+    })(videoEvents[vi]);
+  }
+
+  /* ===================== 手势：单击切控件 / 双击全屏 ===================== */
+  if (elTap) {
+    elTap.addEventListener('click', function (e) {
+      e.preventDefault();
+      var now = Date.now();
+      if (now - lastTapAt < 340 && lastTapAt > 0) {
+        lastTapAt = 0;
+        if (tapTimer) { clearTimeout(tapTimer); tapTimer = null; }
+        toggleFullscreen();
+        return;
+      }
+      lastTapAt = now;
+      if (tapTimer) clearTimeout(tapTimer);
+      tapTimer = setTimeout(function () {
+        tapTimer = null;
+        var wasHidden = uiHidden;
+        setUIHidden(!wasHidden, st.immersive);
+        post({ type: 'tap', hidden: !wasHidden });
+      }, TAP_DELAY);
+    }, false);
+  }
+
+  function toggleFullscreen() {
+    if (!hasBridge()) {
+      st.immersive = !st.immersive;
+      setUIHidden(false, st.immersive);
+      applyUI();
+      report(true);
+      /* PC 调试（无 Flutter 桥）时尽量用浏览器原生全屏 */
+      try {
+        if (st.immersive && document.documentElement.requestFullscreen) {
+          var fp = document.documentElement.requestFullscreen();
+          if (fp && fp.catch) fp.catch(function () {});
+        } else if (!st.immersive && document.fullscreenElement && document.exitFullscreen) {
+          document.exitFullscreen();
+        }
+      } catch (e) {}
+      showToast(st.immersive ? '已进入全屏（PC 调试模式）' : '已退出全屏');
+      return;
+    }
+    post({ type: 'fullscreen', on: !st.immersive });
+    showToast(st.immersive ? '退出全屏' : '进入全屏');
+  }
+
+  function toggleMute() {
+    setMuted(!st.muted);
+    if (!st.muted) {
+      if (elVideo.paused) safePlay();
+      showToast('已开启声音');
+    } else {
+      showToast('已静音');
+    }
+    if (st.immersive) setUIHidden(false, true);
+  }
+
+  function togglePlay() {
+    if (elVideo.paused) safePlay();
+    else {
+      try { elVideo.pause(); } catch (e) {}
+    }
+  }
+
+  /* ===================== 按钮绑定 ===================== */
+  for (var bi = 0; bi < btnsMute.length; bi++) {
+    btnsMute[bi].addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleMute();
+    }, false);
+  }
+  if (btnFull) {
+    btnFull.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleFullscreen();
+    }, false);
+  }
+  if (elPlay) {
+    elPlay.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      togglePlay();
+      if (st.immersive) setUIHidden(false, true);
+    }, false);
+  }
+  if (elVol) {
+    elVol.addEventListener('input', function () {
+      var v = parseInt(elVol.value, 10) / 100;
+      if (!isFinite(v)) v = 1;
+      st.volume = v;
+      try { elVideo.volume = v; } catch (e) {}
+      if (v > 0 && st.muted) {
+        st.muted = false;
+        try { elVideo.muted = false; } catch (e) {}
+      }
+      if (v === 0) {
+        st.muted = true;
+        try { elVideo.muted = true; } catch (e) {}
+      }
+      applyUI();
+      report(true);
+    }, false);
+  }
+  if (elSeek) {
+    elSeek.addEventListener('input', function () {
+      dragging = true;
+      var ratio = parseInt(elSeek.value, 10) / 1000;
+      setSeekFill(ratio);
+      var max = Math.max(knownDuration(), bufferedEnd(), 1);
+      if (elNow) elNow.textContent = fmtTime(ratio * max);
+    }, false);
+    elSeek.addEventListener('change', function () {
+      commitSeek();
+    }, false);
+    elSeek.addEventListener('touchstart', function () {
+      dragging = true;
+    }, { passive: true });
+    elSeek.addEventListener('touchend', function () {
+      if (dragging) commitSeek();
+    }, false);
+  }
+  if (elRetry) {
+    elRetry.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      manualRetry();
+    }, false);
+  }
+  if (elCenter) {
+    elCenter.addEventListener('click', function () {
+      if (needsTap) {
+        needsTap = false;
+        safePlay();
+        applyUI();
+        showToast('点击右下角喇叭可开启声音');
+      }
+    }, false);
+  }
+
+  function manualRetry() {
+    clearStoppedRetry();
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    st.retry = 0;
+    showToast('正在重试…');
+    start();
+    if (st.immersive) setUIHidden(false, true);
+  }
+
+  /* ===================== 看门狗 / 心跳 ===================== */
+  function checkStall() {
+    if (IS_REPLAY || destroyed || document.hidden) return;
+    var now = Date.now();
+    if (st.phase === 'loading') {
+      /* 连接建立 / 收到流头，但一直不出画面：很可能是录制端没有新数据 */
+      if (now - startAt > LOADING_TIMEOUT) {
+        var why = lastMediaInfoAt > 0
+          ? '收到流头但没有视频帧（录制端可能没有新数据）'
+          : '连接后 ' + Math.round(LOADING_TIMEOUT / 1000) + ' 秒没有收到任何数据';
+        scheduleReconnect(why);
+      }
+      return;
+    }
+    if (st.phase !== 'playing') return;
+    /* 1) 上游没数据了 */
+    if (now - lastDataAt > STALL_TIMEOUT) {
+      scheduleReconnect('超过 ' + Math.round(STALL_TIMEOUT / 1000) + ' 秒没有新数据');
+      return;
+    }
+    /* 2) 数据还在来，但画面不前进：流已损坏（例如服务端换分段时重复了 FLV header） */
+    var ct = video ? video.currentTime : 0;
+    if (video && !video.paused) {
+      if (lastCurrentTime >= 0 && Math.abs(ct - lastCurrentTime) < 0.05) {
+        freezeCount++;
+      } else {
+        freezeCount = 0;
+      }
+      lastCurrentTime = ct;
+    } else {
+      freezeCount = 0;
+    }
+    if (freezeCount >= FREEZE_SECONDS) {
+      freezeCount = 0;
+      lastCurrentTime = -1;
+      scheduleReconnect('画面卡住 ' + FREEZE_SECONDS + ' 秒，重新连接');
+    }
+  }
+
+  function tick() {
+    if (destroyed) return;
+    if (IS_REPLAY) {
+      updateReplayUI();
+      report(false);
+    } else {
+      report(false);
+    }
+  }
+
+  /* ===================== 供 Flutter 调用 ===================== */
+  window.PV = {
+    version: '1.0',
+    isReplay: IS_REPLAY,
+    play: function () { if (IS_REPLAY) safePlay(); },
+    pause: function () { try { elVideo.pause(); } catch (e) {} },
+    toggle: function () { togglePlay(); },
+    setMuted: function (m) { setMuted(!!m); },
+    toggleMute: function () { toggleMute(); },
+    setVolume: function (v) {
+      var n = Number(v);
+      if (!isFinite(n)) return;
+      n = Math.max(0, Math.min(1, n));
+      st.volume = n;
+      try { elVideo.volume = n; } catch (e) {}
+      if (n > 0 && st.muted) setMuted(false);
+      if (n === 0 && !st.muted) setMuted(true);
+      applyUI();
+      report(true);
+    },
+    seekTo: function (sec) {
+      if (!IS_REPLAY) return;
+      var max = Math.max(knownDuration(), bufferedEnd(), 1);
+      var n = Number(sec);
+      if (!isFinite(n)) return;
+      var ratio = Math.max(0, Math.min(1, n / max));
+      if (elSeek) elSeek.value = String(Math.round(ratio * 1000));
+      commitSeek();
+    },
+    setImmersive: function (on) {
+      st.immersive = !!on;
+      setUIHidden(false, st.immersive);
+      applyUI();
+      report(true);
+    },
+    reconnect: function () { manualRetry(); },
+    state: function () { return JSON.stringify(st); },
+    /* 诊断信息：Flutter 在出错时取一次，方便远端定位 */
+    diag: function () {
+      var now = Date.now();
+      return JSON.stringify({
+        ua: navigator.userAgent,
+        src: SRC,
+        isReplay: IS_REPLAY,
+        phase: st.phase,
+        message: st.message || '',
+        retry: st.retry,
+        width: st.width,
+        height: st.height,
+        bitrate: st.bitrate,
+        speedKBps: Math.round(st.speedKBps),
+        freezeCount: freezeCount,
+        loaded: st.loaded,
+        mse: typeof window.MediaSource !== 'undefined',
+        flvjsSupported: (window.flvjs && window.flvjs.isSupported) ? !!window.flvjs.isSupported() : false,
+        keepAliveMs: startAt ? now - startAt : -1,
+        lastDataAgoMs: lastDataAt ? now - lastDataAt : -1,
+        lastMediaInfoAgoMs: lastMediaInfoAt ? now - lastMediaInfoAt : -1,
+        errors: errorLog
+      });
+    },
+    isSupported: function () { return !!(window.flvjs && window.flvjs.isSupported && window.flvjs.isSupported()); },
+    destroy: function () {
+      destroyed = true;
+      stopPlayer();
+      clearStoppedRetry();
+      errorLog = [];
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
+      if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+      if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+      if (tapTimer) { clearTimeout(tapTimer); tapTimer = null; }
+    }
+  };
+
+  /* ===================== 错误兜底 ===================== */
+  window.onerror = function (msg, url, line) {
+    post({ type: 'js-error', message: String(msg) + ' @' + String(line) });
+    return false;
+  };
+
+  document.addEventListener('visibilitychange', function () {
+    /* 回到前台后重置看门狗，避免把后台挂起误判成断流 */
+    lastDataAt = Date.now();
+  }, false);
+
+  window.addEventListener('pagehide', function () {
+    try { window.PV.destroy(); } catch (e) {}
+  }, false);
+
+  window.addEventListener('beforeunload', function () {
+    try { window.PV.destroy(); } catch (e) {}
+  }, false);
+
+  /* ===================== 启动 ===================== */
+  try {
+    if (TITLE && document.title !== TITLE) document.title = TITLE;
+  } catch (e) {}
+
+  stallTimer = setInterval(checkStall, 1000);
+  tickTimer = setInterval(tick, 500);
+
+  start();
 })();
 </script>
 </body>

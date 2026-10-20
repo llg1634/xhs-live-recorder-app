@@ -59,6 +59,8 @@ class LinkResolver {
         roomId: douyin,
         pageUrl: effective.toString(),
         rawInput: rawText,
+        webRid: _extractDouyinWebRid(url.toString()) ??
+            _extractDouyinWebRid(effective.toString()),
       );
     }
 
@@ -131,6 +133,14 @@ class LinkResolver {
     return null;
   }
 
+  /// 从链接里取抖音 web_rid：
+  /// `live.douyin.com/<rid>` 或 `www.douyin.com/follow/live/<rid>`。
+  static String? _extractDouyinWebRid(String text) {
+    final m = RegExp(r'(?:live\.douyin\.com/|/follow/live/)(\d{5,})')
+        .firstMatch(text);
+    return m?.group(1);
+  }
+
   String? _matchDouyin(Uri uri) {
     final host = uri.host.toLowerCase();
     if (host == 'live.douyin.com') {
@@ -139,6 +149,13 @@ class LinkResolver {
     }
     if (host == 'www.douyin.com' || host == 'douyin.com') {
       final m = RegExp(r'^/follow/live/(\d+)').firstMatch(uri.path);
+      return m?.group(1);
+    }
+    // 分享短链 v.douyin.com/xxxx 会 302 到
+    // webcast.amemv.com/douyin/webcast/reflow/<room_id>，
+    // 该页面内嵌签名 FLV 直链（见 DouyinResolver.resolveFromReflow）。
+    if (host == 'webcast.amemv.com' || host.endsWith('.amemv.com')) {
+      final m = RegExp(r'^/douyin/webcast/reflow/(\d+)').firstMatch(uri.path);
       return m?.group(1);
     }
     return null;
@@ -167,6 +184,9 @@ class LinkResolver {
             .replaceAll(RegExp(r'的小红书直播间$'), '')
             .replaceAll(RegExp(r' - 小红书$'), '')
             .trim();
+        // 页面静态 HTML 的 og:title 常常只是"小红书"这类通用标题，不能当主播名。
+        const generic = {'小红书', '小红书直播', '抖音', '抖音直播', ''};
+        if (generic.contains(anchor)) return room;
         return room.copyWith(
           title: title,
           anchorName: anchor.isEmpty ? null : anchor,

@@ -1,0 +1,40 @@
+// verify/gradle/plugin-compat.gradle —— 仅用于验证「插件 buildscript 兼容补丁」是否可行。
+// 作用等价于建议写进 app/android/build.gradle.kts 的 allprojects 补丁：
+//   1) 把所有项目 buildscript 的仓库前置注入阿里云镜像（本机 dl.google.com 404 不可达）；
+//   2) 把第三方插件 buildscript 里硬编码的旧 AGP 版本对齐到本工程的 AGP 9.1.0，
+//      避免 AGP 7.4.2/8.0.0 在 Gradle 9.3.1 上加载崩溃。
+// 用法：cd app/android && ./gradlew :app:help -I ../../verify/gradle/plugin-compat.gradle
+
+def MIRRORS = [
+    'https://maven.aliyun.com/repository/google',
+    'https://maven.aliyun.com/repository/public',
+    'https://maven.aliyun.com/repository/gradle-plugin',
+    'https://maven.aliyun.com/repository/central'
+]
+
+gradle.allprojects { p ->
+    p.buildscript.repositories {
+        MIRRORS.eachWithIndex { url, i ->
+            maven { m ->
+                m.name = "cnMirrorBuildscript${i}"
+                m.url = url
+            }
+        }
+    }
+    p.buildscript.configurations.configureEach { c ->
+        c.resolutionStrategy.eachDependency { d ->
+            if (d.requested.group == 'com.android.tools.build' && d.requested.name == 'gradle') {
+                d.useVersion '9.1.0'
+                d.because 'plugin buildscript hardcodes AGP 7.x/8.x, incompatible with Gradle 9.3.1 & dl.google.com blocked'
+            }
+            if (d.requested.group == 'org.jetbrains.kotlin' && d.requested.name == 'kotlin-gradle-plugin') {
+                d.useVersion '2.4.0'
+                d.because 'align plugin buildscript Kotlin with root project Kotlin 2.4.0'
+            }
+        }
+    }
+    p.repositories {
+        // 不在这里加：settings.gradle.kts 使用 PREFER_SETTINGS，project 级仓库会报错。
+        // project.repositories 的镜像由 ~/.gradle/init.d/cn-mirrors.gradle 处理。
+    }
+}

@@ -1,0 +1,27 @@
+HTTP/1.1 302 Found
+Date: Tue, 20 Oct 2026 11:23:01 GMT
+Content-Type: text/html; charset=utf-8
+Content-Length: 388
+Connection: keep-alive
+Server: nginx
+Set-Cookie: acw_tc=0a0d0a4d17924953810213567e20fc4b8521349fda2feb460ba57d63deb9f1;path=/;HttpOnly;Max-Age=1800
+Cat-Msg-Id: karen-gateway-default-0a264e65.40224-497910-30697586
+Location: https://www.xiaohongshu.com/livestream/dynpathScH7KeS3/570501740524334550?timestamp=1792491036496&share_source=share_link&share_source_id=&source=share_out_of_app&host_id=6523a46a000000002b003f5e&xsec_token=UB2aG8c2aLqBvaNocWK_fpaSIofw4Vw-zpkwkWslBCigBThnR7ajl2cXGAinFMZE8-&xsec_source=app_share&share_id=bc54e330e15e4e7babb61a18089e0692
+Request-Id: 0737c1f6f3e247a69f3b6b4c224d32ba
+
+HTTP/1.1 200 OK
+Date: Tue, 20 Oct 2026 11:23:01 GMT
+Content-Type: text/html; charset=utf-8
+Alt-Svc: h3=":443"; ma=2592000, h3-29=":443"; ma=2592000, h3-27=":443"; ma=2592000, h3-Q050=":443"; ma=2592000, h3-Q046=":443"; ma=2592000, h3-Q043=":443"; ma=2592000, h3-Q039=":443"; ma=2592000, quic=":443"; ma=2592000; v="39,43,46"
+Transfer-Encoding: chunked
+Connection: keep-alive
+Server: openresty
+Set-Cookie: acw_tc=0a00d62f17924953811847843eeb350decebd4418fbb71c38541388a1e6a4d;path=/;HttpOnly;Max-Age=1800
+Set-Cookie: abRequestId=037d90b6-bcd2-530e-b2e4-da9608f622e9; path=/; expires=Wed, 20 Oct 2027 11:23:01 GMT; domain=xiaohongshu.com
+Access-Control-Allow-Origin: 0
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Methods: GET,OPTIONS
+Access-Control-Max-Age: 86400
+XHS-REQUEST-TIME: 0.037
+xhs-real-ip: 125.216.247.183
+

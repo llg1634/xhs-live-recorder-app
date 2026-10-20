@@ -7,3 +7,7 @@ testrun/
 *.html
 !app/assets/web/*.html
 verify/*.apk
+
+plaza_net.json
+*.log
+.dsh-ops-update-*.lock

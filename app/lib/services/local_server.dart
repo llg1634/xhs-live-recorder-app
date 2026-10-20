@@ -1,13 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path/path.dart' as p;
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 
+import '../models/live_room.dart';
 import 'recording_manager.dart';
 
 /// 本地 HTTP 服务：
@@ -32,13 +33,21 @@ class LocalStreamServer {
   String playerUrlForLive(String taskId) =>
       '$baseUrl/player.html?src=${Uri.encodeComponent('/live/$taskId.flv')}&title=${Uri.encodeComponent('直播预览')}';
 
-  String playerUrlForFile(String filePath) =>
-      '$baseUrl/player.html?src=${Uri.encodeComponent('/file?path=$filePath')}';
+  String playerUrlForFile(String filePath) {
+    final name = p.basename(filePath);
+    return '$baseUrl/player.html?src=${Uri.encodeComponent('/file?path=$filePath')}'
+        '&title=${Uri.encodeComponent(name)}';
+  }
 
   Future<void> start() async {
     if (_server != null) return;
     final handler = const Pipeline().addHandler(_route);
-    _server = await shelf_io.serve(handler, InternetAddress.loopbackIPv4, port);
+    try {
+      _server = await shelf_io.serve(handler, InternetAddress.loopbackIPv4, port);
+    } catch (_) {
+      // 固定端口被占用时退回随机端口，保证预览功能可用。
+      _server = await shelf_io.serve(handler, InternetAddress.loopbackIPv4, 0);
+    }
     _server!.autoCompress = false;
   }
 
@@ -63,32 +72,118 @@ class LocalStreamServer {
       if (path == '/file') {
         return await _file(request);
       }
+      if (path == '/debug') {
+        return _debug();
+      }
       return Response.notFound('not found');
     } catch (e) {
       return Response.internalServerError(body: '$e');
     }
   }
 
+  Response _debug() {
+    final tasks = manager.tasks.map((t) => {
+          'id': t.id,
+          'state': t.state.name,
+          'room': t.room?.roomId,
+          'platform': t.room?.platform.key,
+          'bytes': t.totalBytes,
+          'segments': t.segmentCount,
+          'recorder': manager.recorderFor(t.id) != null,
+          'prelude': manager.recorderFor(t.id)?.prelude?.length,
+          'outputDir': t.outputDir,
+          'error': t.errorMessage,
+        }).toList();
+    return Response.ok(
+      const JsonEncoder.withIndent('  ').convert({'port': actualPort, 'tasks': tasks}),
+      headers: {'content-type': 'application/json; charset=utf-8'},
+    );
+  }
+
+  /// 实时预览：直接 tail 正在写入的分段文件。
+  ///
+  /// 不用 `recorder.previewStream` 的原因：预录头 + 实时 socket 字节在拼接处
+  /// 不是 FLV tag 对齐的，flv.js 解析会卡住；而 part 文件本身是一个完整 FLV，
+  /// 从头顺序读就是合法的渐进式视频流（延迟约等于写盘 flush 间隔）。
   Response _liveStream(String taskId) {
-    final recorder = manager.recorderFor(taskId);
-    if (recorder == null) {
-      return Response.notFound('task not recording');
-    }
-    StreamSubscription<Uint8List>? subscription;
+    final task = manager.taskById(taskId);
+    if (task == null) return Response.notFound('task not found');
+
     late StreamController<List<int>> controller;
+    var cancelled = false;
+
+    Future<void> pump() async {
+      var offset = 0;
+      var idleTicks = 0;
+      File? current;
+
+      while (!cancelled) {
+        final segmentPath = task.currentSegment?.path ??
+            (task.segments.isNotEmpty ? task.segments.last.path : null);
+        if (segmentPath == null) {
+          if (!task.isActive) break;
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+          continue;
+        }
+
+        final file = File(segmentPath);
+        if (current?.path != file.path) {
+          current = file;
+          offset = 0;
+          idleTicks = 0;
+        }
+
+        try {
+          if (!await file.exists()) {
+            await Future<void>.delayed(const Duration(milliseconds: 200));
+            continue;
+          }
+          final length = await file.length();
+          if (length > offset) {
+            final raf = await file.open();
+            try {
+              await raf.setPosition(offset);
+              final bytes = await raf.read(length - offset);
+              if (bytes.isNotEmpty && !cancelled && !controller.isClosed) {
+                offset += bytes.length;
+                idleTicks = 0;
+                try {
+                  controller.add(bytes);
+                } catch (_) {
+                  // 客户端可能在读取过程中断开，忽略即可。
+                  break;
+                }
+              }
+            } finally {
+              await raf.close();
+            }
+            continue;
+          }
+        } catch (_) {
+          // 文件正在写入时偶尔读不到，忽略后重试。
+        }
+
+        // 文件暂时没有新数据：等下一轮；若任务已结束且连续多次没数据则收尾。
+        idleTicks++;
+        if (!task.isActive && idleTicks > 10) break;
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      }
+
+      if (!cancelled && !controller.isClosed) {
+        try {
+          await controller.close();
+        } catch (_) {}
+      }
+    }
+
     controller = StreamController<List<int>>(
       onListen: () {
-        final prelude = recorder.prelude;
-        if (prelude != null) controller.add(prelude);
-        subscription = recorder.previewStream.listen(
-          controller.add,
-          onError: controller.addError,
-          onDone: controller.close,
-        );
+        debugPrint('[live] client connected: task=$taskId');
+        unawaited(pump());
       },
-      onCancel: () async {
-        await subscription?.cancel();
-        subscription = null;
+      onCancel: () {
+        cancelled = true;
+        debugPrint('[live] client disconnected: task=$taskId');
       },
     );
 
@@ -98,6 +193,7 @@ class LocalStreamServer {
         'content-type': 'video/x-flv',
         'cache-control': 'no-store',
         'access-control-allow-origin': '*',
+        'accept-ranges': 'none',
       },
     );
   }

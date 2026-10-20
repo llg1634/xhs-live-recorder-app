@@ -10,15 +10,27 @@ class StorageService {
   final String preferredRoot;
 
   Directory? _resolved;
+  Future<Directory>? _pending;
 
-  /// 解析并创建录像根目录。
-  Future<Directory> root({String? fallbackRoot}) async {
+  /// 解析并创建录像根目录（并发调用共享同一次解析，避免写探针互相踩踏）。
+  Future<Directory> root({String? fallbackRoot}) {
     final cached = _resolved;
-    if (cached != null) return cached;
+    if (cached != null) return Future<Directory>.value(cached);
 
+    final pending = _pending;
+    if (pending != null) return pending;
+
+    final future = _resolveRoot(fallbackRoot);
+    _pending = future;
+    return future.whenComplete(() {
+      if (identical(_pending, future)) _pending = null;
+    });
+  }
+
+  Future<Directory> _resolveRoot(String? fallbackRoot) async {
     final candidates = <String>[
       preferredRoot,
-      if (fallbackRoot != null) fallbackRoot,
+      ?fallbackRoot,
     ];
 
     for (final path in candidates) {

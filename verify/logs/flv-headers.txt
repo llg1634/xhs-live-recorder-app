@@ -1,0 +1,210 @@
+########## attempt 1 (rc=28 code=200 magic=1 size=6725761) ##########
+HTTP/1.1 200 OK
+Server: openresty
+Date: Tue, 20 Oct 2026 11:23:01 GMT
+Content-Type: video/x-flv
+Connection: close
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Origin: *
+X-Tlive-SpanId: 2A0B4475B368D715
+X-Ks-Cache: Miss
+X-Tlive-Hitstatus: miss
+Request-Id: 14986ad74f150e16cc864521147c0c04
+Access-Control-Allow-Methods: GET,HEAD,OPTIONS
+X-Xhs-Cache: Miss
+X-Xhs-Client-ip: 125.216.247.183
+X-Xhs-Server-ip: 14.22.20.222
+X-Xhs-Http-First-Data: 71
+X-Xhs-Request-Id: 14986ad74f150e16cc864521147c0c04
+Access-Control-Expose-Headers: X-Xhs-Client-Ip,X-Xhs-Server-Ip
+
+
+########## attempt 2 (rc=28 code=200 magic=1 size=6252156) ##########
+HTTP/1.1 200 OK
+Server: openresty
+Date: Tue, 20 Oct 2026 11:23:05 GMT
+Content-Type: video/x-flv
+Connection: close
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Origin: *
+X-Tlive-SpanId: 2A0B4475B368D715
+X-Ks-Cache: Miss
+X-Tlive-Hitstatus: miss
+Request-Id: 148d6ad74f190e16a8c7ab2c59138084
+Access-Control-Allow-Methods: GET,HEAD,OPTIONS
+X-Xhs-Cache: Hit
+X-Xhs-Client-ip: 125.216.247.183
+X-Xhs-Server-ip: 14.22.20.221
+X-Xhs-Http-First-Data: 16
+X-Xhs-Request-Id: 148d6ad74f190e16a8c7ab2c59138084
+Access-Control-Expose-Headers: X-Xhs-Client-Ip,X-Xhs-Server-Ip
+
+
+########## attempt 3 (rc=28 code=200 magic=1 size=6200165) ##########
+HTTP/1.1 200 OK
+Server: openresty
+Date: Tue, 20 Oct 2026 11:23:09 GMT
+Content-Type: video/x-flv
+Connection: close
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Origin: *
+X-Tlive-SpanId: 2A0B4475B368D715
+X-Ks-Cache: Miss
+X-Tlive-Hitstatus: miss
+Request-Id: 149e6ad74f1d0e16c5b8b4e28fc1cdd9
+Access-Control-Allow-Methods: GET,HEAD,OPTIONS
+X-Xhs-Cache: Hit
+X-Xhs-Client-ip: 2001:250:3000:3cc4:34aa:7a6a:7ea8:ae0
+X-Xhs-Server-ip: 240e:982:e600:2100::3a
+X-Xhs-Http-First-Data: 6
+X-Xhs-Request-Id: 149e6ad74f1d0e16c5b8b4e28fc1cdd9
+Access-Control-Expose-Headers: X-Xhs-Client-Ip,X-Xhs-Server-Ip
+
+
+########## attempt 4 (rc=28 code=200 magic=1 size=6061603) ##########
+HTTP/1.1 200 OK
+Server: openresty
+Date: Tue, 20 Oct 2026 11:23:13 GMT
+Content-Type: video/x-flv
+Connection: close
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Origin: *
+X-Tlive-SpanId: 2A0B4475B368D715
+X-Ks-Cache: Miss
+X-Tlive-Hitstatus: miss
+Request-Id: 14936ad74f210e166ab5fbea60d93f01
+Access-Control-Allow-Methods: GET,HEAD,OPTIONS
+X-Xhs-Cache: Hit
+X-Xhs-Client-ip: 2001:250:3000:3cc4:34aa:7a6a:7ea8:ae0
+X-Xhs-Server-ip: 240e:982:e600:2100::3a
+X-Xhs-Http-First-Data: 5
+X-Xhs-Request-Id: 14936ad74f210e166ab5fbea60d93f01
+Access-Control-Expose-Headers: X-Xhs-Client-Ip,X-Xhs-Server-Ip
+
+
+########## attempt 5 (rc=28 code=200 magic=1 size=5762789) ##########
+HTTP/1.1 200 OK
+Server: openresty
+Date: Tue, 20 Oct 2026 11:23:16 GMT
+Content-Type: video/x-flv
+Connection: close
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Origin: *
+X-Tlive-SpanId: 2A0B4475B368D715
+X-Ks-Cache: Miss
+X-Tlive-Hitstatus: miss
+Request-Id: 149b6ad74f240e16d766fa0c31e0fbcb
+Access-Control-Allow-Methods: GET,HEAD,OPTIONS
+X-Xhs-Cache: Hit
+X-Xhs-Client-ip: 2001:250:3000:3cc4:34aa:7a6a:7ea8:ae0
+X-Xhs-Server-ip: 240e:982:e600:2100::3a
+X-Xhs-Http-First-Data: 4
+X-Xhs-Request-Id: 149b6ad74f240e16d766fa0c31e0fbcb
+Access-Control-Expose-Headers: X-Xhs-Client-Ip,X-Xhs-Server-Ip
+
+
+########## attempt 6 (rc=28 code=200 magic=1 size=5320276) ##########
+HTTP/1.1 200 OK
+Server: openresty
+Date: Tue, 20 Oct 2026 11:23:20 GMT
+Content-Type: video/x-flv
+Connection: close
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Origin: *
+X-Tlive-SpanId: 2A0B4475B368D715
+X-Ks-Cache: Miss
+X-Tlive-Hitstatus: miss
+Request-Id: 148d6ad74f280e16a7d5aec86e900b7b
+Access-Control-Allow-Methods: GET,HEAD,OPTIONS
+X-Xhs-Cache: Hit
+X-Xhs-Client-ip: 125.216.247.183
+X-Xhs-Server-ip: 14.22.20.221
+X-Xhs-Http-First-Data: 4
+X-Xhs-Request-Id: 148d6ad74f280e16a7d5aec86e900b7b
+Access-Control-Expose-Headers: X-Xhs-Client-Ip,X-Xhs-Server-Ip
+
+
+########## attempt 7 (rc=28 code=200 magic=1 size=5385823) ##########
+HTTP/1.1 200 OK
+Server: openresty
+Date: Tue, 20 Oct 2026 11:23:24 GMT
+Content-Type: video/x-flv
+Connection: close
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Origin: *
+X-Tlive-SpanId: 2A0B4475B368D715
+X-Ks-Cache: Miss
+X-Tlive-Hitstatus: miss
+Request-Id: 148d6ad74f2c0e16dc350417a02e3365
+Access-Control-Allow-Methods: GET,HEAD,OPTIONS
+X-Xhs-Cache: Hit
+X-Xhs-Client-ip: 125.216.247.183
+X-Xhs-Server-ip: 14.22.20.221
+X-Xhs-Http-First-Data: 4
+X-Xhs-Request-Id: 148d6ad74f2c0e16dc350417a02e3365
+Access-Control-Expose-Headers: X-Xhs-Client-Ip,X-Xhs-Server-Ip
+
+
+########## attempt 8 (rc=28 code=200 magic=1 size=7456000) ##########
+HTTP/1.1 200 OK
+Server: openresty
+Date: Tue, 20 Oct 2026 11:23:28 GMT
+Content-Type: video/x-flv
+Connection: close
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Origin: *
+X-Tlive-SpanId: 2A0B4475B368D715
+X-Ks-Cache: Miss
+X-Tlive-Hitstatus: miss
+Request-Id: 14986ad74f300e160e9f01cbfae69b6b
+Access-Control-Allow-Methods: GET,HEAD,OPTIONS
+X-Xhs-Cache: Hit
+X-Xhs-Client-ip: 2001:250:3000:3cc4:34aa:7a6a:7ea8:ae0
+X-Xhs-Server-ip: 240e:982:e600:2100::3a
+X-Xhs-Http-First-Data: 4
+X-Xhs-Request-Id: 14986ad74f300e160e9f01cbfae69b6b
+Access-Control-Expose-Headers: X-Xhs-Client-Ip,X-Xhs-Server-Ip
+
+
+########## attempt 9 (rc=28 code=200 magic=1 size=7129282) ##########
+HTTP/1.1 200 OK
+Server: openresty
+Date: Tue, 20 Oct 2026 11:23:31 GMT
+Content-Type: video/x-flv
+Connection: close
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Origin: *
+X-Tlive-SpanId: 2A0B4475B368D715
+X-Ks-Cache: Miss
+X-Tlive-Hitstatus: miss
+Request-Id: 148e6ad74f330e162705be5e0b68ca2b
+Access-Control-Allow-Methods: GET,HEAD,OPTIONS
+X-Xhs-Cache: Hit
+X-Xhs-Client-ip: 2001:250:3000:3cc4:34aa:7a6a:7ea8:ae0
+X-Xhs-Server-ip: 240e:982:e600:2100::3a
+X-Xhs-Http-First-Data: 5
+X-Xhs-Request-Id: 148e6ad74f330e162705be5e0b68ca2b
+Access-Control-Expose-Headers: X-Xhs-Client-Ip,X-Xhs-Server-Ip
+
+
+########## attempt 10 (rc=28 code=200 magic=1 size=6960535) ##########
+HTTP/1.1 200 OK
+Server: openresty
+Date: Tue, 20 Oct 2026 11:23:35 GMT
+Content-Type: video/x-flv
+Connection: close
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Origin: *
+X-Tlive-SpanId: 2A0B4475B368D715
+X-Ks-Cache: Miss
+X-Tlive-Hitstatus: miss
+Request-Id: 14946ad74f370e16f6ffcdfccda2cafd
+Access-Control-Allow-Methods: GET,HEAD,OPTIONS
+X-Xhs-Cache: Hit
+X-Xhs-Client-ip: 2001:250:3000:3cc4:34aa:7a6a:7ea8:ae0
+X-Xhs-Server-ip: 240e:982:e600:2100::3a
+X-Xhs-Http-First-Data: 10
+X-Xhs-Request-Id: 14946ad74f370e16f6ffcdfccda2cafd
+Access-Control-Expose-Headers: X-Xhs-Client-Ip,X-Xhs-Server-Ip
+
+

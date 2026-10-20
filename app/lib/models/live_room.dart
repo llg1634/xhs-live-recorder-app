@@ -27,13 +27,18 @@ class LiveRoom {
     required this.rawInput,
     this.title,
     this.anchorName,
+    this.webRid,
   });
 
   /// 平台。
   final LivePlatform platform;
 
-  /// 房间号（小红书为数字房间号，抖音为 web_rid）。
+  /// 房间号（小红书为数字房间号，抖音为内部 room_id）。
   final String roomId;
+
+  /// 抖音的 web_rid（`live.douyin.com/<web_rid>` 里的那一段）。
+  /// 短链解析后拿到的常是内部 room_id，弹幕页面必须用 web_rid 才能正常渲染。
+  final String? webRid;
 
   /// 归一化后的直播间页面地址（可能带 xsec_token 等参数）。
   final String pageUrl;

@@ -1,33 +1,71 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
 import 'app.dart';
+import 'services/android_permissions.dart';
+import 'services/comment_capture.dart';
+import 'services/douyin_resolver.dart';
+import 'services/foreground_service.dart';
+import 'services/launch_intent.dart';
 import 'services/link_resolver.dart';
 import 'services/local_server.dart';
 import 'services/recording_manager.dart';
 import 'services/storage_service.dart';
+import 'ui/debug/comment_probe_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await _ensurePermissions();
+  await ForegroundKeepAlive.init();
 
   final storage = StorageService();
+  final douyin = DouyinResolver();
+  final comments = CommentCaptureManager();
   final manager = RecordingManager(
     resolver: LinkResolver(),
     storage: storage,
+    comments: comments,
+    douyinUrlResolver: (room) => room.pageUrl.contains('/reflow/')
+        ? douyin.resolveFromReflow(room.roomId)
+        : douyin.resolveFlvUrl(room.roomId),
   );
 
-  final server = LocalStreamServer(manager: manager);
+  // 有任务在录 → 常驻前台服务，息屏不中断。
+  manager.addListener(() {
+    ForegroundKeepAlive.sync(activeCount: manager.activeCount);
+  });
+
+  final server = LocalStreamServer(manager: manager, port: 17346);
   await server.start();
+  debugPrint('[server] local stream server: ${server.baseUrl}');
+
+  // 支持通过 intent 额外参数 / 外部链接直接开录（自动化验收与分享入口）。
+  LaunchIntent.init((url, withComments) {
+    manager.startTask(url, withComments: withComments).then(
+      (task) => debugPrint('[launch] task started: ${task.id}'),
+      onError: (Object e) => debugPrint('[launch] startTask failed: $e'),
+    );
+  }, onProbe: (url) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      LiveRecorderApp.navigatorKey.currentState?.push(MaterialPageRoute<void>(
+        builder: (_) => CommentProbePage(url: url),
+      ));
+    });
+  }, onAction: (action) {
+    debugPrint('[launch] action: $action');
+    if (action == 'stopall') {
+      manager.stopAll();
+    }
+  });
 
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider<RecordingManager>.value(value: manager),
+        ChangeNotifierProvider<CommentCaptureManager>.value(value: comments),
         ChangeNotifierProvider<ThemeController>(create: (_) => ThemeController()),
         Provider<LocalStreamServer>.value(value: server),
         Provider<StorageService>.value(value: storage),
@@ -41,14 +79,9 @@ Future<void> main() async {
 Future<void> _ensurePermissions() async {
   if (!Platform.isAndroid) return;
   try {
-    final status = await Permission.storage.status;
-    if (!status.isGranted) {
-      await Permission.storage.request();
-    }
-    if (await Permission.manageExternalStorage.isDenied) {
-      await Permission.manageExternalStorage.request();
-    }
+    if (await AndroidPermissions.isStorageReady()) return;
+    await AndroidPermissions.requestStorage();
   } catch (_) {
-    // 部分模拟器上权限插件会抛异常，忽略即可。
+    // 权限失败不阻塞启动：StorageService 会自动回退到可写目录。
   }
 }

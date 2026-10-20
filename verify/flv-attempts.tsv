@@ -1,0 +1,11 @@
+idx	rc	http_code	content_type	size_bytes	time_s	speed_Bps	time_starttransfer_s	num_redirects	flv_magic	first16_hex	curl_err
+1	28	200	video/x-flv	6725761	3.001514	2241003	0.090368	0	1	464c5601050000000900000000120001	curl: (28) Operation timed out after 3001 milliseconds with 6725761 bytes received  
+2	28	200	video/x-flv	6252156	2.999350	2084694	0.044858	0	1	464c5601050000000900000000120001	curl: (28) Operation timed out after 3000 milliseconds with 6252156 bytes received  
+3	28	200	video/x-flv	6200165	3.001790	2065631	0.028256	0	1	464c5601050000000900000000120001	curl: (28) Operation timed out after 3001 milliseconds with 6200165 bytes received  
+4	28	200	video/x-flv	6061603	2.999800	2020889	0.223645	0	1	464c5601050000000900000000120001	curl: (28) Operation timed out after 3000 milliseconds with 6061603 bytes received  
+5	28	200	video/x-flv	5762789	3.001022	1920471	0.034985	0	1	464c5601050000000900000000120001	curl: (28) Operation timed out after 3000 milliseconds with 5762789 bytes received  
+6	28	200	video/x-flv	5320276	3.001533	1772630	0.029698	0	1	464c5601050000000900000000120001	curl: (28) Operation timed out after 3001 milliseconds with 5320276 bytes received  
+7	28	200	video/x-flv	5385823	3.000736	1794933	0.024347	0	1	464c5601050000000900000000120001	curl: (28) Operation timed out after 3000 milliseconds with 5385823 bytes received  
+8	28	200	video/x-flv	7456000	2.999977	2485649	0.030480	0	1	464c5601050000000900000000120001	curl: (28) Operation timed out after 3000 milliseconds with 7456000 bytes received  
+9	28	200	video/x-flv	7129282	3.000094	2376477	0.025244	0	1	464c5601050000000900000000120001	curl: (28) Operation timed out after 3000 milliseconds with 7129282 bytes received  
+10	28	200	video/x-flv	6960535	3.000692	2319863	0.031537	0	1	464c5601050000000900000000120001	curl: (28) Operation timed out after 3000 milliseconds with 6960535 bytes received  

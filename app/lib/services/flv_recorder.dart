@@ -59,8 +59,20 @@ class FlvRecorder {
 
   /// 当前分段开头的若干字节（FLV 头 + 首个 metadata/keyframe），
   /// 供中途接入的播放器补头。
-  Uint8List? _prelude;
-  Uint8List? get prelude => _prelude;
+  Uint8List? _flvHeader;
+  Uint8List? _initTail;
+  Uint8List? _lastKeyFrame;
+  final List<int> _parseBuf = [];
+
+  /// 给中途接入的播放器补的"病态头"：FLV 头 + 序列头 + 最近一个关键帧。
+  Uint8List? get prelude {
+    if (_flvHeader == null) return null;
+    final b = BytesBuilder(copy: false);
+    b.add(_flvHeader!);
+    if (_initTail != null) b.add(_initTail!);
+    if (_lastKeyFrame != null) b.add(_lastKeyFrame!);
+    return b.toBytes();
+  }
 
   /// 正在录制的实时数据（不含已写入磁盘的历史字节）。
   Stream<Uint8List> get previewStream => _preview.stream;
@@ -74,6 +86,7 @@ class FlvRecorder {
   Timer? _idleTimer;
   Timer? _flushTimer;
   bool _idleHit = false;
+  bool _sinkClosed = false;
   Completer<String>? _segmentDone;
 
   bool get isRunning => _running;
@@ -151,10 +164,14 @@ class FlvRecorder {
     segments.add(segment);
 
     await file.parent.create(recursive: true);
-    final sink = await file.openWrite();
+    final sink = file.openWrite();
     _sink = sink;
+    _sinkClosed = false;
     segment.bytes = 0;
-    _prelude = null;
+    _flvHeader = null;
+    _initTail = null;
+    _lastKeyFrame = null;
+    _parseBuf.clear();
     onSegment?.call(segment, false);
 
     final client = HttpClient()
@@ -176,7 +193,10 @@ class FlvRecorder {
 
       if (response.statusCode != 200) {
         await response.drain<void>().catchError((_) {});
-        done.complete('not-live');
+        // 404 = 直播未开播/已结束，直接判定结束；
+        // 其它状态（403 签名过期 / 5xx / 429）当作断流，走 3 次探测重连，
+        // 每次探测都会通过 urlProvider 重新解析最新签名地址。
+        done.complete(response.statusCode == 404 ? 'not-live' : 'error');
       } else {
         _restartIdleTimer();
         _flushTimer?.cancel();
@@ -188,15 +208,16 @@ class FlvRecorder {
 
         _subscription = response.listen(
           (chunk) {
-            if (chunk.isEmpty) return;
+            if (chunk.isEmpty || _sinkClosed) return;
             _restartIdleTimer();
             final bytes = Uint8List.fromList(chunk);
-            if (_prelude == null) {
-              _prelude = Uint8List.fromList(
-                bytes.length > 64 * 1024 ? bytes.sublist(0, 64 * 1024) : bytes,
-              );
+            _consumeForPrelude(bytes);
+            try {
+              sink.add(bytes);
+            } catch (_) {
+              // 停止录制时 sink 可能已关闭，丢弃剩余数据即可。
+              return;
             }
-            sink.add(bytes);
             segment.bytes += bytes.length;
             totalBytes += bytes.length;
             if (!_preview.isClosed) _preview.add(bytes);
@@ -242,6 +263,7 @@ class FlvRecorder {
       _subscription = null;
       try {
         await sink.flush();
+        _sinkClosed = true;
         await sink.close();
       } catch (_) {}
       _sink = null;
@@ -251,6 +273,53 @@ class FlvRecorder {
       segment.endedAt = DateTime.now();
       onSegment?.call(segment, true);
     }
+  }
+
+  /// 增量解析 FLV 标签，缓存「FLV 头 + 脚本标签/AVC 序列头 + 最近关键帧」。
+  ///
+  /// 中途接入的播放器只有拿到序列头 + 关键帧才能立刻出画，否则会黑屏等下一个 GOP。
+  void _consumeForPrelude(Uint8List chunk) {
+    _parseBuf.addAll(chunk);
+
+    if (_flvHeader == null && _parseBuf.length >= 13) {
+      _flvHeader = Uint8List.fromList(_parseBuf.sublist(0, 13));
+      _parseBuf.removeRange(0, 13);
+    }
+
+    while (_parseBuf.length >= 11) {
+      final tagType = _parseBuf[0] & 0x1F;
+      final size = (_parseBuf[1] << 16) | (_parseBuf[2] << 8) | _parseBuf[3];
+      final total = 11 + size + 4;
+      if (_parseBuf.length < total) break;
+
+      final tagBytes = Uint8List.fromList(_parseBuf.sublist(0, total));
+      final body = _parseBuf.sublist(11, 11 + size);
+      _parseBuf.removeRange(0, total);
+
+      if (tagType == 18) {
+        // onMetaData
+        _initTail = _concatBytes(_initTail, tagBytes);
+      } else if (tagType == 9 && body.length >= 2) {
+        final frameType = (body[0] >> 4) & 0x0F;
+        final avcPacketType = body[1];
+        if (avcPacketType == 0) {
+          // AVC sequence header
+          _initTail = _concatBytes(_initTail, tagBytes);
+        } else if (frameType == 1) {
+          _lastKeyFrame = tagBytes;
+        }
+      }
+
+      if (_parseBuf.length > 4 * 1024 * 1024) _parseBuf.clear();
+    }
+  }
+
+  Uint8List _concatBytes(Uint8List? a, Uint8List b) {
+    if (a == null) return b;
+    final out = Uint8List(a.length + b.length)
+      ..setRange(0, a.length, a)
+      ..setRange(a.length, a.length + b.length, b);
+    return out;
   }
 
   void _restartIdleTimer() {

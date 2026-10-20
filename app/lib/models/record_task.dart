@@ -106,8 +106,14 @@ class RecordTask {
   DateTime? startedAt;
   DateTime? endedAt;
 
-  /// 弹幕数量（本版本仅预留，恒为 0）。
+  /// 弹幕数量。
   int commentCount = 0;
+
+  /// 是否同时采集弹幕（仅小红书，默认关；用户按任务手动开启）。
+  bool commentsEnabled = false;
+
+  /// 最近一条弹幕时间。
+  DateTime? lastCommentAt;
 
   String get title => room?.displayName ?? '解析中…';
 
