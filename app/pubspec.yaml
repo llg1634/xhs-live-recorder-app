@@ -1,0 +1,31 @@
+name: live_recorder
+description: "小红书 / 抖音直播录制器（Android）"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  provider: ^6.1.2
+  path_provider: ^2.1.4
+  path: ^1.9.0
+  webview_flutter: ^4.10.0
+  shelf: ^1.4.2
+  permission_handler: ^11.3.1
+  shared_preferences: ^2.3.2
+  uuid: ^4.5.1
+  flutter_foreground_task: ^8.17.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/web/

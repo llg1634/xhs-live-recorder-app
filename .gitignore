@@ -1,0 +1,9 @@
+app/build/
+app/.dart_tool/
+app/.gradle/
+testrun/
+*.flv
+*.bin
+*.html
+!app/assets/web/*.html
+verify/*.apk

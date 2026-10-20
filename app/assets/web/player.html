@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>{{TITLE}}</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
+  video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+  #tip { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+         color: #9aa4b2; font: 14px -apple-system, "PingFang SC", sans-serif; text-align: center; }
+</style>
+</head>
+<body>
+<video id="v" muted playsinline autoplay></video>
+<div id="tip">正在连接直播流…</div>
+<script src="flv.min.js"></script>
+<script>
+(function () {
+  var src = "{{SRC}}";
+  var video = document.getElementById('v');
+  var tip = document.getElementById('tip');
+  if (!src) { tip.textContent = '缺少播放地址'; return; }
+  if (flvjs.isSupported()) {
+    var player = flvjs.createPlayer({ type: 'flv', isLive: true, url: src }, {
+      enableWorker: false, enableStashBuffer: false, stashInitialSize: 128, autoCleanupSourceBuffer: true
+    });
+    player.attachMediaElement(video);
+    player.load();
+    player.play().catch(function () {});
+    player.on(flvjs.Events.ERROR, function (e) { tip.textContent = '播放错误：' + e; });
+    video.addEventListener('playing', function () { tip.style.display = 'none'; });
+  } else {
+    tip.textContent = '当前 WebView 不支持 MSE';
+  }
+})();
+</script>
+</body>
+</html>
