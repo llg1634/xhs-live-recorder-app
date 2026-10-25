@@ -10,6 +10,31 @@ English README: [README.en.md](README.en.md)
 
 重要提示：本工具仅用于您有权录制的内容。请遵守平台规则与主播意愿，不要用本工具录制付费内容、侵权内容或用于商业再利用。
 
+## 安装（下载哪个文件，看这里）
+
+方式一（推荐）：点击页面右侧 **Releases**，下载最新版本的 `live-recorder-arm64-v1.0.0.apk`。
+
+1. 在手机浏览器或文件管理器里点开下载好的 APK
+2. 系统提示「禁止安装未知来源应用」时，允许当前应用安装未知应用
+3. 点击安装，等待完成
+4. 打开 App，首次进入按提示允许通知权限（录制时常驻通知需要）
+
+> 只提供 **arm64-v8a** 包（近几年的手机都是这个架构），体积约 19 MB，要求 **Android 7.0（API 24）及以上**。模拟器或特殊设备请用源码构建对应架构。
+
+方式二：从源码构建，见下方「从源码构建」。
+
+### 从源码构建
+
+```bash
+git clone https://github.com/llg1634/live-recorder-android.git
+cd live-recorder-android/app
+flutter pub get
+flutter build apk --release --target-platform android-arm64
+```
+
+产物：`app/build/app/outputs/flutter-apk/app-release.apk`。
+环境：Flutter 3.47 / Dart 3.13，Android SDK 34+。
+
 ## 功能
 
 - 录制小红书直播的真实 FLV 视频流（与播放器同源，非录屏）
@@ -26,31 +51,6 @@ English README: [README.en.md](README.en.md)
 - **录像库**：按时间排序（最新/最早可切换）、分段回放、显示弹幕条数、单场删除（二次确认可在设置关闭）
 - **液态玻璃 UI**：深浅双主题 + 6 套主题色（粉紫/青蓝/薄荷绿/琥珀橙/玫瑰红/石墨灰），选择持久化
 - **前台服务**：常驻通知显示录制路数与时长，Android 13+ 自动申请通知权限
-
-## 安装（下载哪个文件，看这里）
-
-方式一（推荐）：点击页面右侧 **Releases**，下载最新版本的 `live-recorder-arm64-v1.0.0.apk`。
-
-方式二：从源码构建，见下方「从源码构建」。
-
-1. 在手机浏览器或文件管理器里点开下载好的 APK
-2. 系统提示「禁止安装未知来源应用」时，允许当前应用安装未知应用
-3. 点击安装，等待完成
-4. 打开 App，首次进入按提示允许通知权限（录制时常驻通知需要）
-
-> 只提供 **arm64-v8a** 包（近几年的手机都是这个架构），体积约 19 MB，要求 **Android 7.0（API 24）及以上**。模拟器或特殊设备请用源码构建对应架构。
-
-### 从源码构建
-
-```bash
-git clone https://github.com/llg1634/live-recorder-android.git
-cd live-recorder-android/app
-flutter pub get
-flutter build apk --release --target-platform android-arm64
-```
-
-产物：`app/build/app/outputs/flutter-apk/app-release.apk`。
-环境：Flutter 3.47 / Dart 3.13，Android SDK 34+。
 
 ## 使用
 
