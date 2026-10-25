@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/live_room.dart';
+import '../models/quality.dart';
 import '../models/record_task.dart';
 import 'comment_capture.dart';
 import 'flv_recorder.dart';
@@ -30,7 +31,11 @@ class RecordingManager extends ChangeNotifier {
   final CommentCaptureManager? comments;
 
   /// 抖音需要运行时解析带签名的 FLV 地址；为空时抖音任务会提示未支持。
-  final Future<String> Function(LiveRoom room)? douyinUrlResolver;
+  final Future<String> Function(LiveRoom room, RecordQuality quality)?
+      douyinUrlResolver;
+
+  /// 当前画质偏好（由设置页同步）。
+  RecordQuality recordQuality = RecordQuality.highest;
 
   final int maxConcurrentTasks;
 
@@ -227,8 +232,11 @@ class RecordingManager extends ChangeNotifier {
       }
 
       Future<String> urlProvider() async {
-        if (room.platform == LivePlatform.xhs) return room.flvUrl;
-        return await douyinUrlResolver!(room);
+        final RecordQuality quality = recordQuality;
+        if (room.platform == LivePlatform.xhs) {
+          return _xhsUrl(room, quality);
+        }
+        return await douyinUrlResolver!(room, quality);
       }
 
       late final FlvRecorder recorder;
@@ -304,6 +312,32 @@ class RecordingManager extends ChangeNotifier {
       } catch (e) {
         debugPrint('[resume] ${t.id} failed: $e');
       }
+    }
+  }
+
+  /// 小红书直链：默认画质用 `_hcv5401`（540P），该档位不存在时回退无后缀（1080P）。
+  Future<String> _xhsUrl(LiveRoom room, RecordQuality quality) async {
+    if (quality == RecordQuality.highest) return room.flvUrl;
+    final String standard = room.flvUrlFor(RecordQuality.standard);
+    if (await _urlAlive(standard)) return standard;
+    debugPrint('[task] ${room.roomId} 没有 540P 档位，回退默认直链');
+    return room.flvUrl;
+  }
+
+  Future<bool> _urlAlive(String url) async {
+    final HttpClient client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 6);
+    try {
+      final HttpClientRequest request = await client.getUrl(Uri.parse(url));
+      request.headers.set(HttpHeaders.userAgentHeader, FlvRecorder.defaultUserAgent);
+      request.headers.set(HttpHeaders.refererHeader, 'https://www.xiaohongshu.com/');
+      final HttpClientResponse response = await request.close();
+      await response.drain<void>().catchError((_) {});
+      return response.statusCode == HttpStatus.ok;
+    } catch (_) {
+      return false;
+    } finally {
+      client.close(force: true);
     }
   }
 

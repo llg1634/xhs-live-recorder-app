@@ -1,6 +1,8 @@
 /// 直播平台与直播间模型。
 library;
 
+import 'quality.dart';
+
 enum LivePlatform { xhs, douyin }
 
 extension LivePlatformX on LivePlatform {
@@ -54,11 +56,19 @@ class LiveRoom {
 
   /// 小红书 FLV 直连地址：房间号即可构造，无需签名/登录/浏览器。
   /// 抖音在 [platform] 为 douyin 时返回空串，需要另行解析。
-  String get flvUrl => switch (platform) {
-        LivePlatform.xhs =>
-          'https://live-source-play.xhscdn.com/live/$roomId.flv',
-        LivePlatform.douyin => '',
-      };
+  String get flvUrl => flvUrlFor(RecordQuality.highest);
+
+  /// 按画质偏好取小红书直链。
+  ///
+  /// - 最高画质：无后缀直链（实测 1920×1080）
+  /// - 默认画质：`_hcv5401`（540P）；房间没有该档位时由调用方回退到无后缀
+  String flvUrlFor(RecordQuality quality) {
+    if (platform != LivePlatform.xhs) return '';
+    if (quality == RecordQuality.standard) {
+      return 'https://live-source-play.xhscdn.com/live/${roomId}_hcv5401.flv';
+    }
+    return 'https://live-source-play.xhscdn.com/live/$roomId.flv';
+  }
 
   /// 展示名：优先主播名，其次标题，最后房间号。
   String get displayName {

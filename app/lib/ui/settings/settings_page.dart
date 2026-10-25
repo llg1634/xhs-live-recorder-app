@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../app.dart';
+import '../../models/quality.dart';
 import '../../services/recording_manager.dart';
 import '../../services/storage_service.dart';
 import '../../theme/glass_palette.dart';
@@ -304,6 +305,40 @@ class _SettingsPageState extends State<SettingsPage> {
                           value: '$maxConcurrent',
                           valueColor: c.accent,
                           iconColor: c.accent,
+                        ),
+                        const GlassDivider(indent: 16, endIndent: 16),
+                        _InfoRow(
+                          icon: Icons.high_quality_outlined,
+                          title: '画质',
+                          subtitle: '最高：原画/1080P；默认：720P/540P，更省流量。',
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              GlassPill(
+                                label: '最高',
+                                dense: true,
+                                filled: appSettings.quality ==
+                                    RecordQuality.highest,
+                                color: c.accent,
+                                onTap: () {
+                                  HapticFeedback.selectionClick();
+                                  appSettings.quality = RecordQuality.highest;
+                                },
+                              ),
+                              const SizedBox(width: 6),
+                              GlassPill(
+                                label: '默认',
+                                dense: true,
+                                filled: appSettings.quality ==
+                                    RecordQuality.standard,
+                                color: c.accent,
+                                onTap: () {
+                                  HapticFeedback.selectionClick();
+                                  appSettings.quality = RecordQuality.standard;
+                                },
+                              ),
+                            ],
+                          ),
                         ),
                         const GlassDivider(indent: 16, endIndent: 16),
                         _InfoRow(

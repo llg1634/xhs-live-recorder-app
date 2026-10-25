@@ -29,8 +29,25 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 滚动状态只驱动玻璃面板内部的模糊子树，不 setState 重建整页。
   final ValueNotifier<bool> _scrolling = ValueNotifier<bool>(false);
 
+  /// 应用偏好（画质 / 删除确认 / 排序），在这里创建以便同步给录制管理器。
+  late final AppSettingsController _settings;
+
+  @override
+  void initState() {
+    super.initState();
+    _settings = AppSettingsController()..addListener(_syncQuality);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncQuality());
+  }
+
+  void _syncQuality() {
+    if (!mounted) return;
+    context.read<RecordingManager>().recordQuality = _settings.quality;
+  }
+
   @override
   void dispose() {
+    _settings.removeListener(_syncQuality);
+    _settings.dispose();
     _scrolling.dispose();
     super.dispose();
   }
@@ -64,8 +81,8 @@ class _HomeScreenState extends State<HomeScreen> {
       (RecordingManager m) => m.activeCount,
     );
 
-    return ChangeNotifierProvider<AppSettingsController>(
-      create: (_) => AppSettingsController(),
+    return ChangeNotifierProvider<AppSettingsController>.value(
+      value: _settings,
       child: AnnotatedRegion<SystemUiOverlayStyle>(
         value: (isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
             .copyWith(

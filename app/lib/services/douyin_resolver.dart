@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../models/live_room.dart';
+import '../models/quality.dart';
 
 /// 抖音直播 FLV 直链解析器（**纯 HTTP，无需 WebView**）。
 ///
@@ -81,7 +82,8 @@ class DouyinResolver {
   /// - 直播间未开播 / 已结束（接口 `status=4` 且 `flv_pull_url` 为空）；
   /// - 被风控（接口 200 但 body 为空；会先自动刷新 `ttwid` 重试一次）；
   /// - 网络超时。
-  Future<String> resolveFlvUrl(String webRid) async {
+  Future<String> resolveFlvUrl(String webRid,
+      {RecordQuality quality = RecordQuality.highest}) async {
     final rid = _normalizeWebRid(webRid);
     if (rid == null) {
       throw LinkResolveException('抖音房间号无效：$webRid');
@@ -98,7 +100,7 @@ class DouyinResolver {
       }
     }
 
-    return _pickFlvUrl(json);
+    return _pickFlvUrl(json, quality);
   }
 
   /// 清掉缓存的 `ttwid`（切换网络、被风控或调试时可手动调用）。
@@ -244,7 +246,7 @@ class DouyinResolver {
   // ---------------------------------------------------------------------------
 
   /// 从 `room/web/enter` 的 JSON 里选一个档位的 FLV 直链。
-  String _pickFlvUrl(Map<String, dynamic> json) {
+  String _pickFlvUrl(Map<String, dynamic> json, RecordQuality quality) {
     final statusCode = json['status_code'];
     if (statusCode is num && statusCode != 0) {
       if (statusCode == 4001038) {
@@ -277,7 +279,11 @@ class DouyinResolver {
     }
 
     String? picked;
-    for (final key in qualityPreference) {
+    // 最高画质优先 FULL_HD1；默认画质从 HD1 起，省流量。
+    final List<String> order = quality == RecordQuality.highest
+        ? qualityPreference
+        : const <String>['HD1', 'SD2', 'SD1', 'FULL_HD1'];
+    for (final key in order) {
       final value = flvMap[key];
       if (value is String && value.isNotEmpty) {
         picked = value;
@@ -300,7 +306,8 @@ class DouyinResolver {
   /// 该页面 HTML 里**直接内嵌了带签名的 FLV 直链**，不需要调 API。
   ///
   /// 每次调用都重新抓页面，因此断流重连会拿到新的签名地址。
-  Future<String> resolveFromReflow(String roomIdOrUrl) async {
+  Future<String> resolveFromReflow(String roomIdOrUrl,
+      {RecordQuality quality = RecordQuality.highest}) async {
     final id = RegExp(r'\d{5,}').firstMatch(roomIdOrUrl)?.group(0);
     if (id == null) throw LinkResolveException('抖音房间号无效：$roomIdOrUrl');
 
@@ -334,7 +341,7 @@ class DouyinResolver {
       if (urls.isEmpty) {
         throw LinkResolveException('抖音分享页里没有直播流（可能已下播）');
       }
-      final picked = _pickBestReflow(urls);
+      final picked = _pickBestReflow(urls, quality);
       // 注意：reflow 的 CDN 走 https 会 403，必须保留接口给的 http 地址。
       return picked;
     } on TimeoutException {
@@ -344,8 +351,12 @@ class DouyinResolver {
     }
   }
 
-  String _pickBestReflow(List<String> urls) {
-    const order = ['_uhd', '_or4', '_hd', '_sd', '_ld'];
+  String _pickBestReflow(List<String> urls, RecordQuality quality) {
+    // 实测：_or4 = 1080P 原画，_hd/_sd = 720P，_ld = 540P。
+    const List<String> best = <String>['_uhd', '_or4', '_hd', '_sd', '_ld'];
+    const List<String> standard = <String>['_hd', '_sd', '_ld', '_or4', '_uhd'];
+    final List<String> order =
+        quality == RecordQuality.highest ? best : standard;
     for (final key in order) {
       for (final url in urls) {
         if (url.contains('$key.flv')) return url;

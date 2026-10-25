@@ -32,9 +32,9 @@ Future<void> main() async {
     resolver: LinkResolver(),
     storage: storage,
     comments: comments,
-    douyinUrlResolver: (room) => room.pageUrl.contains('/reflow/')
-        ? douyin.resolveFromReflow(room.roomId)
-        : douyin.resolveFlvUrl(room.roomId),
+    douyinUrlResolver: (room, quality) => room.pageUrl.contains('/reflow/')
+        ? douyin.resolveFromReflow(room.roomId, quality: quality)
+        : douyin.resolveFlvUrl(room.roomId, quality: quality),
   );
 
   // 有任务在录 → 常驻前台服务，息屏不中断。
