@@ -6,7 +6,7 @@
 
 | 项 | 值 |
 |---|---|
-| 仓库名 | `live-recorder-android` |
+| 仓库名 | `xhs-live-recorder-app` |
 | 描述（About） | 小红书 / 抖音直播录制 App：一键录制真实 FLV 视频流与真实弹幕评论，导出 partNN.flv + comments.ass/srt/jsonl，支持多直播间并发、边录边看、中断续录。Xiaohongshu & Douyin live recorder for Android. |
 | Topics | `android`, `flutter`, `live-recorder`, `livestream-recorder`, `xiaohongshu`, `douyin`, `danmaku`, `flv`, `ass-subtitles` |
 | 默认分支 | `main` |
@@ -27,15 +27,15 @@
 cd "D:\renwu\261020小红书直播录制"
 
 # 创建公开仓库（不初始化 README，本地已有）
-gh repo create llg1634/live-recorder-android --public \
+gh repo create llg1634/xhs-live-recorder-app --public \
   --description "小红书 / 抖音直播录制 App：录制真实 FLV 视频流与真实弹幕，导出 partNN.flv + comments.ass/srt/jsonl。Xiaohongshu & Douyin live recorder for Android."
 
 # 关联远程并推送
-git remote add origin https://github.com/llg1634/live-recorder-android.git
+git remote add origin https://github.com/llg1634/xhs-live-recorder-app.git
 git push -u origin main
 
 # 设置 topics
-gh repo edit llg1634/live-recorder-android \
+gh repo edit llg1634/xhs-live-recorder-app \
   --add-topic android,flutter,live-recorder,livestream-recorder,xiaohongshu,douyin,danmaku,flv,ass-subtitles
 ```
 

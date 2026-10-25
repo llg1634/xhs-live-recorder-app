@@ -26,8 +26,8 @@ English README: [README.en.md](README.en.md)
 ### 从源码构建
 
 ```bash
-git clone https://github.com/llg1634/live-recorder-android.git
-cd live-recorder-android/app
+git clone https://github.com/llg1634/xhs-live-recorder-app.git
+cd xhs-live-recorder-app/app
 flutter pub get
 flutter build apk --release --target-platform android-arm64
 ```
@@ -88,7 +88,7 @@ xhs_570511686529001102_主播昵称_20261025-222924/
 ## 目录结构
 
 ```text
-live-recorder-android/
+xhs-live-recorder-app/
 ├── app/                          ← Flutter App
 │   ├── lib/
 │   │   ├── services/

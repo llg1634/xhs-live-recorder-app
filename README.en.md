@@ -43,8 +43,8 @@ Option 2: build from source (see below).
 ### Build from source
 
 ```bash
-git clone https://github.com/llg1634/live-recorder-android.git
-cd live-recorder-android/app
+git clone https://github.com/llg1634/xhs-live-recorder-app.git
+cd xhs-live-recorder-app/app
 flutter pub get
 flutter build apk --release --target-platform android-arm64
 ```
@@ -85,7 +85,7 @@ Open `part01.flv` in PotPlayer and drag `comments.ass` into the window (same fol
 ## Project layout
 
 ```text
-live-recorder-android/
+xhs-live-recorder-app/
 ├── app/                          ← Flutter app
 │   ├── lib/
 │   │   ├── services/             ← recorder, resolvers, danmaku, subtitles, local server
