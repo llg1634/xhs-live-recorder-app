@@ -19,6 +19,7 @@ Color taskStateColor(GlassColors c, TaskState state) => switch (state) {
   TaskState.reconnecting => c.warning,
   TaskState.completed => c.success,
   TaskState.stopped => c.textTertiary,
+  TaskState.interrupted => c.warning,
   TaskState.error => c.danger,
 };
 
@@ -31,12 +32,16 @@ class TaskCard extends StatelessWidget {
     this.onLongPress,
     this.onStop,
     this.onPreview,
+    this.onResume,
   });
 
   final RecordTask task;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
   final VoidCallback? onStop;
+
+  /// 「继续录制」：仅对已中断的任务显示。
+  final VoidCallback? onResume;
 
   /// 「预览」/「回放」按钮：录制中走实时预览，结束后走最近一段录像。
   final VoidCallback? onPreview;
@@ -101,6 +106,16 @@ class TaskCard extends StatelessWidget {
                   tint: c.danger,
                   semanticLabel: '停止录制',
                   onPressed: onStop,
+                )
+              else if (state == TaskState.interrupted && onResume != null)
+                GlassIconButton(
+                  icon: Icons.play_arrow_rounded,
+                  size: 34,
+                  iconSize: 19,
+                  color: c.warning,
+                  tint: c.warning,
+                  semanticLabel: '继续录制',
+                  onPressed: onResume,
                 )
               else
                 Icon(
@@ -218,6 +233,12 @@ class TaskCard extends StatelessWidget {
           '共 ${task.segmentCount} 段',
           formatBytes(task.totalBytes),
           ?commentPart,
+        ].join(' · ');
+      case TaskState.interrupted:
+        return <String>[
+          '已中断',
+          '已保留 ${task.segmentCount} 段 / ${formatBytes(task.totalBytes)}',
+          '可继续录制',
         ].join(' · ');
       case TaskState.error:
         return <String>['录制出错', ?roomPart].join(' · ');

@@ -55,8 +55,10 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 
   void _toggleSort() {
+    final AppSettingsController settings = context.read<AppSettingsController>();
+    settings.sortNewestFirst = !_newestFirst;
     setState(() {
-      _newestFirst = !_newestFirst;
+      _newestFirst = settings.sortNewestFirst;
       _applySort();
     });
   }
@@ -101,6 +103,9 @@ class _LibraryPageState extends State<LibraryPage> {
     }
     final List<Directory> dirs = await storage.listSessions();
     if (!mounted || generation != _generation) return;
+    if (mounted) {
+      _newestFirst = context.read<AppSettingsController>().sortNewestFirst;
+    }
     final List<SessionInfo> sessions = dirs
         .map(SessionInfo.fromDirectory)
         .toList();

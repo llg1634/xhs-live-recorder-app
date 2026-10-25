@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -41,6 +42,9 @@ Future<void> main() async {
     ForegroundKeepAlive.sync(activeCount: manager.activeCount);
   });
 
+  // 恢复上次被系统杀掉 / 被划掉时留下的任务（标为已中断，可继续录制）。
+  unawaited(manager.restore());
+
   final server = LocalStreamServer(manager: manager, port: 17346);
   await server.start();
   debugPrint('[server] local stream server: ${server.baseUrl}');
@@ -61,6 +65,8 @@ Future<void> main() async {
     debugPrint('[launch] action: $action');
     if (action == 'stopall') {
       manager.stopAll();
+    } else if (action == 'resume') {
+      unawaited(manager.resumeAllInterrupted());
     }
   });
 
@@ -79,7 +85,8 @@ Future<void> main() async {
 }
 
 /// Android 9 及以下需要写外部存储；10+ 无权限时回退到应用私有目录。
-Future<void> _ensurePermissions() async {  if (!Platform.isAndroid) return;
+Future<void> _ensurePermissions() async {
+  if (!Platform.isAndroid) return;
   try {
     if (await AndroidPermissions.isStorageReady()) return;
     await AndroidPermissions.requestStorage();

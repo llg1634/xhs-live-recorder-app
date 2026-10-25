@@ -173,6 +173,7 @@ class RecordPage extends StatelessWidget {
                           onPreview: () => _openTask(context, task),
                           onLongPress: () => _showTaskActions(context, task),
                           onStop: () => _stopTask(context, task),
+                          onResume: () => _resumeTask(context, task),
                         ),
                       ),
                     ),
@@ -225,6 +226,21 @@ class RecordPage extends StatelessWidget {
     await manager.stopAll();
     if (context.mounted) {
       showGlassSnack(context, '已停止全部录制任务');
+    }
+  }
+
+  /// 继续一个被中断的任务：沿用原目录，分段号接着排。
+  Future<void> _resumeTask(BuildContext context, RecordTask task) async {
+    final RecordingManager manager = context.read<RecordingManager>();
+    try {
+      await manager.resumeTask(task.id);
+      if (context.mounted) {
+        showGlassSnack(context, '继续录制「${task.title}」');
+      }
+    } catch (e) {
+      if (context.mounted) {
+        showGlassSnack(context, '继续失败：${e.toString().replaceFirst('Bad state: ', '')}');
+      }
     }
   }
 

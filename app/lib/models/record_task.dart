@@ -7,6 +7,7 @@ enum TaskState {
   reconnecting, // 断流，探测重连中
   completed, // 直播结束
   stopped, // 用户停止
+  interrupted, // 进程被杀 / 应用被划掉，录制中断（可继续）
   error, // 出错
 }
 
@@ -22,6 +23,7 @@ extension TaskStateX on TaskState {
         TaskState.reconnecting => '重连探测中',
         TaskState.completed => '直播结束',
         TaskState.stopped => '已停止',
+        TaskState.interrupted => '已中断',
         TaskState.error => '出错',
       };
 }
@@ -115,6 +117,9 @@ class RecordTask {
   /// 最近一条弹幕时间。
   DateTime? lastCommentAt;
 
+  /// session.json 的落盘时间（用于恢复时过滤太旧的任务）。
+  DateTime? savedAt;
+
   String get title => room?.displayName ?? '解析中…';
 
   String get platformLabel => room?.platform.label ?? '—';
@@ -140,5 +145,46 @@ class RecordTask {
         'endedAt': endedAt?.toIso8601String(),
         'segments': segments.map((s) => s.toJson()).toList(),
         'commentCount': commentCount,
+        'commentsEnabled': commentsEnabled,
+        'lastCommentAt': lastCommentAt?.toIso8601String(),
       };
+
+  /// 从 `session.json` 恢复任务（用于进程被杀后的补偿）。
+  static RecordTask fromJson(Map<String, dynamic> json) {
+    final task = RecordTask(
+      id: '${json['id']}',
+      rawInput: '${json['rawInput'] ?? ''}',
+      createdAt: DateTime.tryParse('${json['createdAt']}') ?? DateTime.now(),
+    );
+    final room = json['room'];
+    if (room is Map<String, dynamic>) {
+      try {
+        task.room = LiveRoom.fromJson(room);
+      } catch (_) {}
+    }
+    final stateName = json['state']?.toString();
+    task.state = TaskState.values.firstWhere(
+      (s) => s.name == stateName,
+      orElse: () => TaskState.interrupted,
+    );
+    task.errorMessage = json['errorMessage']?.toString();
+    task.outputDir = json['outputDir']?.toString();
+    task.totalBytes = (json['totalBytes'] as num?)?.toInt() ?? 0;
+    task.retryCount = (json['retryCount'] as num?)?.toInt() ?? 0;
+    task.startedAt = DateTime.tryParse('${json['startedAt']}');
+    task.endedAt = DateTime.tryParse('${json['endedAt']}');
+    task.commentCount = (json['commentCount'] as num?)?.toInt() ?? 0;
+    task.commentsEnabled = json['commentsEnabled'] == true;
+    task.lastCommentAt = DateTime.tryParse('${json['lastCommentAt']}');
+    task.savedAt = DateTime.tryParse('${json['savedAt']}');
+    final segments = json['segments'];
+    if (segments is List) {
+      for (final item in segments) {
+        if (item is Map<String, dynamic>) {
+          task.segments.add(RecordSegment.fromJson(item));
+        }
+      }
+    }
+    return task;
+  }
 }

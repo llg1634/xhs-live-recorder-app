@@ -10,8 +10,10 @@ class AppSettingsController extends ChangeNotifier {
   }
 
   static const String _deleteConfirmKey = 'delete_confirm_before';
+  static const String _sortNewestKey = 'library_sort_newest';
 
   bool _deleteConfirm = true;
+  bool _sortNewestFirst = true;
   bool _touched = false;
 
   /// 默认 `true`：破坏性操作保留二次确认。
@@ -22,27 +24,45 @@ class AppSettingsController extends ChangeNotifier {
     _touched = true;
     _deleteConfirm = value;
     notifyListeners();
-    _persist(value);
+    _persist(_deleteConfirmKey, value);
+  }
+
+  /// 录像列表默认排序：`true` = 最新在前。
+  bool get sortNewestFirst => _sortNewestFirst;
+
+  set sortNewestFirst(bool value) {
+    if (_sortNewestFirst == value) return;
+    _touched = true;
+    _sortNewestFirst = value;
+    notifyListeners();
+    _persist(_sortNewestKey, value);
   }
 
   Future<void> _restore() async {
     try {
       final SharedPreferences prefs = await SharedPreferences.getInstance();
       if (_touched) return;
+      bool changed = false;
       final bool? stored = prefs.getBool(_deleteConfirmKey);
       if (stored != null && stored != _deleteConfirm) {
         _deleteConfirm = stored;
-        notifyListeners();
+        changed = true;
       }
+      final bool? sort = prefs.getBool(_sortNewestKey);
+      if (sort != null && sort != _sortNewestFirst) {
+        _sortNewestFirst = sort;
+        changed = true;
+      }
+      if (changed) notifyListeners();
     } catch (_) {
       // 偏好读取失败时保持默认值。
     }
   }
 
-  Future<void> _persist(bool value) async {
+  Future<void> _persist(String key, bool value) async {
     try {
       final SharedPreferences prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_deleteConfirmKey, value);
+      await prefs.setBool(key, value);
     } catch (_) {
       // 持久化失败不阻塞本次操作。
     }
