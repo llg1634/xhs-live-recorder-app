@@ -85,14 +85,6 @@ xhs_570511686529001102_主播昵称_20261025-222924/
 
 用 PotPlayer 打开 `part01.flv`，把同目录的 `comments.ass` 拖进播放器窗口即可（同目录同名会自动加载）。多个分段连续播放时，字幕时间轴从第一段开始计算。
 
-## About
-
-一句话简介（复制到 GitHub 仓库 About 栏）：
-
-```text
-小红书 / 抖音直播录制 App：一键录制真实 FLV 视频流与真实弹幕评论，导出 partNN.flv + comments.ass/srt/jsonl，支持多直播间并发、边录边看、中断续录。Xiaohongshu & Douyin live recorder for Android.
-```
-
 ## 目录结构
 
 ```text

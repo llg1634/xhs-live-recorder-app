@@ -7,7 +7,7 @@
 | 项 | 值 |
 |---|---|
 | 仓库名 | `live-recorder-android` |
-| 描述（About） | 见 README「About」段落的一行文案 |
+| 描述（About） | 小红书 / 抖音直播录制 App：一键录制真实 FLV 视频流与真实弹幕评论，导出 partNN.flv + comments.ass/srt/jsonl，支持多直播间并发、边录边看、中断续录。Xiaohongshu & Douyin live recorder for Android. |
 | Topics | `android`, `flutter`, `live-recorder`, `livestream-recorder`, `xiaohongshu`, `douyin`, `danmaku`, `flv`, `ass-subtitles` |
 | 默认分支 | `main` |
 | Release tag | `v1.0.0` |

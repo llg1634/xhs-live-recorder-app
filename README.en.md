@@ -82,14 +82,6 @@ xhs_570511686529001102_nick_20261025-222924/
 
 Open `part01.flv` in PotPlayer and drag `comments.ass` into the window (same folder and name loads automatically).
 
-## About
-
-One-liner for the GitHub "About" field:
-
-```text
-Xiaohongshu & Douyin live recorder for Android: captures real FLV streams and real danmaku, exports partNN.flv + comments.ass/srt/jsonl, with multi-room recording, live preview and crash-safe resume.
-```
-
 ## Project layout
 
 ```text
