@@ -200,7 +200,7 @@ class FlvRecorder {
       } else {
         _restartIdleTimer();
         _flushTimer?.cancel();
-        _flushTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
+        _flushTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
           try {
             await sink.flush();
           } catch (_) {}

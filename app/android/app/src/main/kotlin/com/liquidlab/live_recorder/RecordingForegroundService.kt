@@ -58,7 +58,14 @@ class RecordingForegroundService : Service() {
         val title = intent?.getStringExtra(EXTRA_TITLE) ?: "直播录制中"
         val text = intent?.getStringExtra(EXTRA_TEXT) ?: "正在录制直播间"
         startForeground(NOTIFICATION_ID, buildNotification(title, text))
-        return START_STICKY
+        return START_NOT_STICKY
+    }
+
+    /** 用户从最近任务划掉：直接停服务、退出进程，录到哪算哪（文件已实时 flush）。 */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        stopForegroundCompat()
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {

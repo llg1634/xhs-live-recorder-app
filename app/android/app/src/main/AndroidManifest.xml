@@ -52,11 +52,11 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
-        <!-- 后台持续录制（原生前台服务，见 RecordingForegroundService.kt） -->
+        <!-- 后台录制（前台服务）。用户从最近任务划掉 = 直接停止，不做"偷偷继续录"。 -->
         <service
             android:name=".RecordingForegroundService"
             android:foregroundServiceType="dataSync"
-            android:stopWithTask="false"
+            android:stopWithTask="true"
             android:exported="false" />
     </application>
 
