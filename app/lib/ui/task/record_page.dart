@@ -246,15 +246,21 @@ class RecordPage extends StatelessWidget {
 
   void _openTask(BuildContext context, RecordTask task) {
     final LocalStreamServer server = context.read<LocalStreamServer>();
+    final RecordingManager manager = context.read<RecordingManager>();
     if (task.state == TaskState.resolving) {
       showGlassSnack(context, '正在解析直播链接，请稍候再预览');
       return;
     }
     String? url;
-    if (task.isActive) {
+    // 只有"本进程真的在写盘"的任务才走实时预览。
+    // 录制器已经不在（引擎重建 / 进程恢复回来 / 被别的实例接管）时，
+    // 继续放 /live 只会显示"现在直播"，让人误以为前面的内容没了 —— 改成回放已录内容。
+    final bool live = task.isActive && manager.isRecordingHere(task.id);
+    if (live) {
       url = server.playerUrlForLive(task.id);
     } else if (task.segments.isNotEmpty) {
-      url = server.playerUrlForFile(task.segments.last.path);
+      // 从第一段开始回放：点进任务应该看到"录制从头开始的内容"。
+      url = server.playerUrlForFile(task.segments.first.path);
     }
     if (url == null) {
       final String message = task.state == TaskState.error
@@ -263,10 +269,43 @@ class RecordPage extends StatelessWidget {
       showGlassSnack(context, message, error: true);
       return;
     }
+    _pushPreview(context, title: task.title, url: url);
+  }
+
+  /// 明确回放某一段（长按菜单里的「回放最后一段」）。
+  void _replaySegment(BuildContext context, RecordTask task) {
+    if (task.segments.isEmpty) return;
+    final LocalStreamServer server = context.read<LocalStreamServer>();
+    _pushPreview(
+      context,
+      title: task.title,
+      subtitle: task.segments.last.path.split(RegExp(r'[\\/]')).last,
+      url: server.playerUrlForFile(task.segments.last.path),
+    );
+  }
+
+  /// 从第一段开始回放（多分段任务最常用：确认"前面的内容还在"）。
+  void _replayFirst(BuildContext context, RecordTask task) {
+    if (task.segments.isEmpty) return;
+    final LocalStreamServer server = context.read<LocalStreamServer>();
+    _pushPreview(
+      context,
+      title: task.title,
+      subtitle: task.segments.first.path.split(RegExp(r'[\\/]')).last,
+      url: server.playerUrlForFile(task.segments.first.path),
+    );
+  }
+
+  void _pushPreview(
+    BuildContext context, {
+    required String title,
+    required String url,
+    String? subtitle,
+  }) {
     Navigator.of(context).push<void>(
       glassPageRoute<void>(
         context,
-        page: LivePreviewPage(title: task.title, url: url),
+        page: LivePreviewPage(title: title, url: url, subtitle: subtitle),
       ),
     );
   }
@@ -286,6 +325,12 @@ class RecordPage extends StatelessWidget {
           value: 'replay',
           label: '回放最后一段',
           icon: Icons.play_circle_outline_rounded,
+        ),
+      if (task.segments.length > 1)
+        const GlassAction(
+          value: 'replayFirst',
+          label: '从头回放（第 1 段）',
+          icon: Icons.replay_rounded,
         ),
       if (!task.isActive)
         const GlassAction(
@@ -307,7 +352,9 @@ class RecordPage extends StatelessWidget {
       case 'stop':
         await _stopTask(context, task);
       case 'replay':
-        _openTask(context, task);
+        _replaySegment(context, task);
+      case 'replayFirst':
+        _replayFirst(context, task);
       case 'remove':
         manager.removeTask(task.id);
         if (context.mounted) {

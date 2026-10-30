@@ -67,7 +67,7 @@ class LocalStreamServer {
       }
       if (path.startsWith('/live/') && path.endsWith('.flv')) {
         final taskId = path.substring('/live/'.length, path.length - 4);
-        return _liveStream(taskId);
+        return await _liveStream(taskId);
       }
       if (path == '/file') {
         return await _file(request);
@@ -105,9 +105,22 @@ class LocalStreamServer {
   /// 不用 `recorder.previewStream` 的原因：预录头 + 实时 socket 字节在拼接处
   /// 不是 FLV tag 对齐的，flv.js 解析会卡住；而 part 文件本身是一个完整 FLV，
   /// 从头顺序读就是合法的渐进式视频流（延迟约等于写盘 flush 间隔）。
-  Response _liveStream(String taskId) {
+  ///
+  /// **只读**：这里绝不打开写句柄，也不会改任务状态——点进预览页只应该"看"，
+  /// 不能影响正在进行的录制。
+  Future<Response> _liveStream(String taskId) async {
     final task = manager.taskById(taskId);
     if (task == null) return Response.notFound('task not found');
+
+    // 本进程没有在写这场录制（录制已结束 / 由别的实例接管 / 录制器已退出）：
+    // 直接把已录好的第一段当成回放发出去，避免播放器无限等一个不会增长的"直播流"，
+    // 也避免用户看到"现在直播"却以为前面的内容丢了。
+    if (!manager.isRecordingHere(taskId)) {
+      final String? replay =
+          task.segments.isNotEmpty ? task.segments.first.path : null;
+      if (replay == null) return Response.notFound('no recording');
+      return _serveFile(File(replay));
+    }
 
     late StreamController<List<int>> controller;
     var cancelled = false;
@@ -198,14 +211,11 @@ class LocalStreamServer {
     );
   }
 
-  Future<Response> _file(Request request) async {
-    final path = request.url.queryParameters['path'] ?? '';
-    if (path.isEmpty) return Response.badRequest(body: 'missing path');
-    final file = File(path);
+  /// 已落盘分段：**只读**打开，支持 Range，供播放器拖动。
+  Future<Response> _serveFile(File file, {String? range}) async {
     if (!await file.exists()) return Response.notFound('file not found');
 
     final length = await file.length();
-    final range = request.headers['range'];
     final contentType = 'video/x-flv';
 
     if (range != null) {
@@ -232,6 +242,12 @@ class LocalStreamServer {
       'accept-ranges': 'bytes',
       'access-control-allow-origin': '*',
     });
+  }
+
+  Future<Response> _file(Request request) async {
+    final path = request.url.queryParameters['path'] ?? '';
+    if (path.isEmpty) return Response.badRequest(body: 'missing path');
+    return _serveFile(File(path), range: request.headers['range']);
   }
 
   Future<Response> _playerPage(Request request) async {

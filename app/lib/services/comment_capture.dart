@@ -79,6 +79,10 @@ class CommentCapture extends ChangeNotifier {
 
   File? _logFile;
   bool _stopped = false;
+  DateTime? _startedAt;
+
+  /// 采集器创建时间（看门狗用它判断"一直没拿到帧"）。
+  DateTime? get startedAt => _startedAt;
 
   String get _tag => taskId.length >= 8 ? taskId.substring(0, 8) : taskId;
 
@@ -89,6 +93,7 @@ class CommentCapture extends ChangeNotifier {
   }
 
   Future<void> start() async {
+    _startedAt = DateTime.now();
     _logFile = File('$outputDir/comments.jsonl');
     final controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -104,7 +109,7 @@ class CommentCapture extends ChangeNotifier {
         if (e.isForMainFrame ?? false) {
           lastError = '${e.errorCode} ${e.description}';
           debugPrint('[comments $_tag] main frame error: $lastError');
-          notifyListeners();
+          _notify();
         }
       },
     ));
@@ -124,18 +129,34 @@ class CommentCapture extends ChangeNotifier {
     }
   }
 
-  Future<void> reload() async {
+  /// 安全通知：停止/销毁之后不再 notify（ChangeNotifier 销毁后再用会抛异常）。
+  void _notify() {
     if (_stopped) return;
-    debugPrint('[comments $_tag] reload page');
-    ready = false;
-    lastError = null;
-    try {
-      await _controller?.reload();
-    } catch (_) {}
     notifyListeners();
   }
 
+  /// 重新加载采集页；返回 false 表示 WebView 本身已经不可用（需要整个重建）。
+  Future<bool> reload() async {
+    if (_stopped) return true;
+    debugPrint('[comments $_tag] reload page');
+    ready = false;
+    lastError = null;
+    final controller = _controller;
+    if (controller == null) return false;
+    try {
+      await controller.reload();
+      _notify();
+      return true;
+    } catch (e) {
+      debugPrint('[comments $_tag] reload failed: $e');
+      lastError = 'WebView 已失效：$e';
+      _notify();
+      return false;
+    }
+  }
+
   Future<void> stop() async {
+    if (_stopped) return;
     _stopped = true;
     _controller = null;
     try {
@@ -151,6 +172,7 @@ class CommentCapture extends ChangeNotifier {
   }
 
   void _onJsMessage(JavaScriptMessage message) {
+    if (_stopped) return;
     Map<String, dynamic>? obj;
     try {
       obj = jsonDecode(message.message) as Map<String, dynamic>;
@@ -162,7 +184,7 @@ class CommentCapture extends ChangeNotifier {
         ready = true;
         lastError = null;
         debugPrint('[comments $_tag] hook ready (${platform.key})');
-        notifyListeners();
+        _notify();
         break;
       case 'frame':
         frameCount++;
@@ -179,7 +201,7 @@ class CommentCapture extends ChangeNotifier {
       case 'err':
         lastError = obj['text']?.toString();
         debugPrint('[comments $_tag] js error: $lastError');
-        notifyListeners();
+        _notify();
         break;
       case 'stat':
         debugPrint('[comments $_tag] stat $obj');
@@ -209,7 +231,7 @@ class CommentCapture extends ChangeNotifier {
     _recent.add(comment);
     _appendLog(comment);
     onComment?.call(comment);
-    notifyListeners();
+    _notify();
   }
 
   void _appendLog(LiveComment comment) {
@@ -257,7 +279,19 @@ class CommentCaptureManager extends ChangeNotifier {
     _captures[taskId] = capture;
     notifyListeners();
 
-    await capture.start();
+    try {
+      await capture.start();
+    } catch (e) {
+      // WebView 起不来（Activity/引擎刚重建、没有可用的 PlatformView 宿主等）时
+      // 只影响弹幕，绝不能把整个录制任务带崩；把半成品从列表里摘掉，避免 UI
+      // 一直挂着无法渲染的 WebViewWidget。
+      debugPrint('[comments] startForTask $taskId failed: $e');
+      _captures.remove(taskId);
+      capture.removeListener(notifyListeners);
+      unawaited(capture.stop());
+      notifyListeners();
+      rethrow;
+    }
     _ensureWatchdog();
   }
 
@@ -275,12 +309,50 @@ class CommentCaptureManager extends ChangeNotifier {
     }
   }
 
+  /// App 回到前台时调用：后台待久了 WebView 可能被系统冻结/回收，
+  /// 这里对"没有新帧"的采集器做一次温和的重新加载（不影响录制）。
+  Future<void> onAppResumed() async {
+    final DateTime now = DateTime.now();
+    for (final CommentCapture capture in _captures.values.toList()) {
+      final DateTime? last = capture.lastFrameAt ?? capture.startedAt;
+      if (last == null) continue;
+      if (now.difference(last) < const Duration(minutes: 2)) continue;
+      debugPrint('[comments] resume: reload ${capture.taskId}');
+      final bool ok = await capture.reload();
+      if (!ok) {
+        // WebView 已经彻底失效（Activity 重建后底层 view 被销毁）：
+        // 重建一个采集器，弹幕继续采，录制任务本身完全不受影响。
+        await _rebuild(capture);
+      }
+    }
+  }
+
+  /// 用同样的参数重建一个采集器（只用于 WebView 自愈）。
+  Future<void> _rebuild(CommentCapture old) async {
+    _captures.remove(old.taskId);
+    old.removeListener(notifyListeners);
+    await old.stop();
+    notifyListeners();
+    try {
+      await startForTask(
+        taskId: old.taskId,
+        platform: old.platform,
+        roomUrl: old.roomUrl,
+        outputDir: old.outputDir,
+        startEpochMs: old.startEpochMs,
+        onComment: old.onComment,
+      );
+    } catch (e) {
+      debugPrint('[comments] rebuild ${old.taskId} failed: $e');
+    }
+  }
+
   /// 长时间没有任何帧说明页面可能被节流/掉线，自动重载恢复。
   void _ensureWatchdog() {
     _watchdog ??= Timer.periodic(const Duration(minutes: 1), (_) {
-      final now = DateTime.now();
-      for (final capture in _captures.values) {
-        final last = capture.lastFrameAt;
+      final DateTime now = DateTime.now();
+      for (final CommentCapture capture in _captures.values) {
+        final DateTime? last = capture.lastFrameAt ?? capture.startedAt;
         if (last == null) continue;
         if (now.difference(last) > const Duration(minutes: 8)) {
           debugPrint('[comments] stale >8min, reload page');
@@ -295,6 +367,7 @@ class CommentCaptureManager extends ChangeNotifier {
     _watchdog?.cancel();
     _watchdog = null;
     for (final c in _captures.values) {
+      c.removeListener(notifyListeners);
       unawaited(c.stop());
     }
     _captures.clear();

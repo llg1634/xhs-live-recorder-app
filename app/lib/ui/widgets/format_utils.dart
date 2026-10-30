@@ -69,9 +69,10 @@ String shortRoomId(String roomId, {int max = 19}) {
 }
 
 /// 目录名（`xhs_123_nick_20261020-190000`）解析时间戳。
+/// 允许 `-2` 这类同名去重后缀：`xhs_123_nick_20261020-190000-2`。
 DateTime? parseStampFromName(String name) {
   final RegExpMatch? match = RegExp(
-    r'(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$',
+    r'(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(?:-\d+)?$',
   ).firstMatch(name);
   if (match == null) return null;
   final int year = int.tryParse(match.group(1) ?? '') ?? 0;

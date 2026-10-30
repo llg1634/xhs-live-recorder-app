@@ -26,6 +26,7 @@ class SessionStore {
       final payload = <String, dynamic>{
         ...task.toJson(),
         'savedAt': DateTime.now().toIso8601String(),
+        'ownerPid': pid,
         'app': 'live_recorder',
         'version': 1,
       };

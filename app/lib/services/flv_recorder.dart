@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../models/live_room.dart';
@@ -54,6 +55,9 @@ class FlvRecorder {
   int retryCount = 0;
   int probeFailCount = 0;
 
+  /// 最后一次收到直播数据的本机时间（用于调度器判断"是否真的还在写盘"）。
+  DateTime? lastDataAt;
+
   final StreamController<Uint8List> _preview =
       StreamController<Uint8List>.broadcast();
 
@@ -104,7 +108,7 @@ class FlvRecorder {
     try {
       onState?.call(TaskState.recording);
       while (!_stopped) {
-        final segmentIndex = segments.length + 1;
+        final segmentIndex = await _nextSegmentIndex();
         final reason = await _recordSegment(segmentIndex);
         if (_stopped || reason == 'stopped') {
           finishedByUser = true;
@@ -149,13 +153,65 @@ class FlvRecorder {
     }
   }
 
+  /// 下一个分段号：**以磁盘上已有的 partNN 为准**，绝不覆盖已经录好的文件。
+  ///
+  /// 之前用的是 `segments.length + 1`：只要分段列表因为恢复/重扫失败而变短，
+  /// 就会重新从 `part01.flv` 开始写，而 `File.openWrite()` 默认是截断模式，
+  /// 一次"继续录制 / 重新连接"就可能把整段已录内容清空。
+  Future<int> _nextSegmentIndex() async {
+    final List<String> existing = <String>[];
+    try {
+      await for (final FileSystemEntity entity in outputDir.list()) {
+        if (entity is File) existing.add(entity.path);
+      }
+    } catch (_) {
+      // 目录读不到时退回内存里的分段数，后面的 exists() 兜底仍会避开已有文件。
+    }
+    return nextIndexFor(existing, fallbackCount: segments.length);
+  }
+
+  /// 计算下一个分段号（纯函数，便于单测）：磁盘上最大的 partNN + 1。
+  static int nextIndexFor(Iterable<String> existingPaths,
+      {int fallbackCount = 0}) {
+    var maxIndex = fallbackCount;
+    for (final String path in existingPaths) {
+      final int? index = segmentIndexFromPath(path);
+      if (index != null && index > maxIndex) maxIndex = index;
+    }
+    return maxIndex + 1;
+  }
+
+  /// 从 `part12.flv` 解析出 12；不是分段文件名返回 null。
+  static int? segmentIndexFromPath(String path) {
+    final RegExpMatch? match =
+        RegExp(r'part(\d+)\.flv$', caseSensitive: false).firstMatch(path);
+    if (match == null) return null;
+    return int.tryParse(match.group(1) ?? '');
+  }
+
+  /// `part01.flv` 这种固定宽度命名，保证按文件名排序也是录制顺序。
+  static String _segmentFileName(int index) =>
+      'part${index.toString().padLeft(2, '0')}.flv';
+
   /// 录制一个分段；返回结束原因：`eof` / `idle` / `error` / `not-live` / `stopped`。
   Future<String> _recordSegment(int index) async {
     final url = await urlProvider();
     if (url.isEmpty) return 'not-live';
 
-    final fileName = 'part${index.toString().padLeft(2, '0')}.flv';
-    final file = File(p.join(outputDir.path, fileName));
+    // 双保险：目标文件已经存在（并发实例 / 索引计算失误）时往后顺延，
+    // 宁可多一个空段，也不能截断已录内容。
+    File file = File(p.join(outputDir.path, _segmentFileName(index)));
+    var safeIndex = index;
+    for (var i = 0; i < 32 && await file.exists(); i++) {
+      safeIndex++;
+      file = File(p.join(outputDir.path, _segmentFileName(safeIndex)));
+    }
+    if (await file.exists()) {
+      // 32 个候选都存在：宁可报错也绝不截断任何已有录像。
+      debugPrint('[rec] no free segment name under ${outputDir.path}');
+      return 'error';
+    }
+    index = safeIndex;
     final segment = RecordSegment(
       path: file.path,
       index: index,
@@ -209,6 +265,7 @@ class FlvRecorder {
         _subscription = response.listen(
           (chunk) {
             if (chunk.isEmpty || _sinkClosed) return;
+            lastDataAt = DateTime.now();
             _restartIdleTimer();
             final bytes = Uint8List.fromList(chunk);
             _consumeForPrelude(bytes);

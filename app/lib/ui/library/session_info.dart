@@ -65,7 +65,7 @@ class SessionInfo {
     final DateTime? parsed = parseStampFromName(name);
     final String base = parsed == null
         ? name
-        : name.replaceFirst(RegExp(r'_\d{8}-\d{6}$'), '');
+        : name.replaceFirst(RegExp(r'_\d{8}-\d{6}(?:-\d+)?$'), '');
     final List<String> parts = base.split('_');
     final String platformKey = parts.isNotEmpty ? parts.first : '';
     final String roomId = parts.length > 1 ? parts[1] : '';

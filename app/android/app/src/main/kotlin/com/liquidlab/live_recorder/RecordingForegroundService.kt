@@ -8,7 +8,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.os.Process
 
 /**
  * 常驻前台服务：只要仍在录制，就保住进程不被系统回收。
@@ -61,11 +64,19 @@ class RecordingForegroundService : Service() {
         return START_NOT_STICKY
     }
 
-    /** 用户从最近任务划掉：直接停服务、退出进程，录到哪算哪（文件已实时 flush）。 */
+    /**
+     * 用户从最近任务划掉：直接停服务、退出进程，录到哪算哪（文件每秒 flush，最多丢 1 秒）。
+     *
+     * FlutterEngine 现在是进程级缓存（见 MainActivity），进程不会随 Activity 自动退出，
+     * 所以这里必须显式结束进程，否则"划掉即停"会退化成"划掉后继续偷偷录"。
+     */
     override fun onTaskRemoved(rootIntent: Intent?) {
         stopForegroundCompat()
         stopSelf()
         super.onTaskRemoved(rootIntent)
+        Handler(Looper.getMainLooper()).postDelayed({
+            Process.killProcess(Process.myPid())
+        }, 400L)
     }
 
     override fun onDestroy() {

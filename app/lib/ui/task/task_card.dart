@@ -65,6 +65,10 @@ class TaskCard extends StatelessWidget {
       _ => null,
     };
 
+    // 任务由另一个 Dart 实例在写：本实例没有 recorder，不能提供"停止"（停不掉），
+    // 但仍然显示为录制中，避免用户误以为录制没了。
+    final bool controllable = active && !task.externalOwner;
+
     final bool pulsing =
         state == TaskState.recording ||
         state == TaskState.reconnecting ||
@@ -97,7 +101,7 @@ class TaskCard extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              if (active && onStop != null)
+              if (controllable && onStop != null)
                 GlassIconButton(
                   icon: Icons.stop_rounded,
                   size: 34,
@@ -212,6 +216,7 @@ class TaskCard extends StatelessWidget {
         return <String>[
           ?roomPart,
           '已录 ${formatDuration(task.elapsed)}',
+          if (task.externalOwner) '后台实例录制中',
           ?commentPart,
         ].join(' · ');
       case TaskState.reconnecting:

@@ -42,6 +42,10 @@ Future<void> main() async {
     ForegroundKeepAlive.sync(activeCount: manager.activeCount);
   });
 
+  // 回前台时的兜底：补查 intent 链接 + 唤醒被系统冻结的弹幕 WebView。
+  WidgetsBinding.instance
+      .addObserver(_AppLifecycleBridge(comments: comments, manager: manager));
+
   // 恢复上次被系统杀掉 / 被划掉时留下的任务（标为已中断，可继续录制）。
   unawaited(manager.restore());
 
@@ -114,4 +118,33 @@ void _installFrameLogger() {
       debugPrint('[frame] summary frames=$frames jank=$jank');
     }
   });
+}
+
+/// 前后台切换兜底：不碰录制状态，只做"回到前台后的自愈"。
+class _AppLifecycleBridge extends WidgetsBindingObserver {
+  _AppLifecycleBridge({required this.comments, required this.manager});
+
+  final CommentCaptureManager comments;
+  final RecordingManager manager;
+
+  bool _wasBackground = false;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      _wasBackground = true;
+      return;
+    }
+    if (state != AppLifecycleState.resumed) return;
+
+    // Activity 重建后原生侧可能还留着待处理链接（main() 不会重跑）。
+    LaunchIntent.checkPending();
+    // 录制任务必须继续录：这里只做"自检 + 弹幕自愈"，绝不 stop / resume / 改 outputDir。
+    if (_wasBackground) {
+      _wasBackground = false;
+      unawaited(manager.onAppResumed());
+      unawaited(comments.onAppResumed());
+      debugPrint('[lifecycle] resumed, active=${manager.activeCount}');
+    }
+  }
 }

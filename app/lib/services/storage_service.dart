@@ -53,6 +53,9 @@ class StorageService {
   }
 
   /// 为一次录制创建目录：`{platform}_{roomId}_{yyyyMMdd-HHmmss}`。
+  ///
+  /// 同名目录已存在（同一秒重复开录 / 重启后再次开录）时自动加 `-2`、`-3` 后缀，
+  /// **绝不复用已有目录**——复用会让新的 part01 截断上一次录好的内容。
   Future<Directory> createTaskDir({
     required String platformKey,
     required String roomId,
@@ -65,7 +68,13 @@ class StorageService {
     final folder = safeName.isEmpty
         ? '${platformKey}_${roomId}_$stamp'
         : '${platformKey}_${roomId}_${safeName}_$stamp';
-    final dir = Directory(p.join(base.path, folder));
+    var dir = Directory(p.join(base.path, folder));
+    var suffix = 1;
+    while (await dir.exists()) {
+      suffix++;
+      dir = Directory(p.join(base.path, '$folder-$suffix'));
+      if (suffix > 99) break;
+    }
     await dir.create(recursive: true);
     return dir;
   }
@@ -115,9 +124,9 @@ class StorageService {
     return int.tryParse(m.group(1)!) ?? (1 << 30);
   }
 
-  /// 从目录名末尾解析 `yyyyMMdd-HHmmss` 时间戳。
+  /// 从目录名末尾解析 `yyyyMMdd-HHmmss` 时间戳（允许 `-2` 这类去重后缀）。
   static DateTime? _parseStamp(String name) {
-    final m = RegExp(r'(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$')
+    final m = RegExp(r'(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(?:-\d+)?$')
         .firstMatch(name);
     if (m == null) return null;
     try {

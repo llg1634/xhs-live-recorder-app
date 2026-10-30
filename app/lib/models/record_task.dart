@@ -120,6 +120,16 @@ class RecordTask {
   /// session.json 的落盘时间（用于恢复时过滤太旧的任务）。
   DateTime? savedAt;
 
+  /// 写这份 session.json 的进程 pid。
+  ///
+  /// 与 [savedAt] 一起用来判断「这场录制是不是还被本进程里另一个实例写着」：
+  /// Activity 重建后如果又起了一个 Dart isolate，第二个实例绝不能把正在录的任务
+  /// 标成 interrupted，否则会同时写同一个目录、状态来回翻。
+  int? ownerPid;
+
+  /// 运行时标记：这条任务由另一个实例（另一个 isolate）在录，本实例只做展示。
+  bool externalOwner = false;
+
   String get title => room?.displayName ?? '解析中…';
 
   String get platformLabel => room?.platform.label ?? '—';
@@ -177,6 +187,7 @@ class RecordTask {
     task.commentsEnabled = json['commentsEnabled'] == true;
     task.lastCommentAt = DateTime.tryParse('${json['lastCommentAt']}');
     task.savedAt = DateTime.tryParse('${json['savedAt']}');
+    task.ownerPid = (json['ownerPid'] as num?)?.toInt();
     final segments = json['segments'];
     if (segments is List) {
       for (final item in segments) {
