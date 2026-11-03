@@ -220,8 +220,13 @@ class TaskCard extends StatelessWidget {
           ?commentPart,
         ].join(' · ');
       case TaskState.reconnecting:
+        // reconnectAttempt = 本轮连续重连的序号（收到数据就归零），
+        // 比累计 retryCount 更贴近用户看到的「还在抢救第几次」。
+        final int attempt =
+            task.reconnectAttempt > 0 ? task.reconnectAttempt : task.retryCount;
         return <String>[
-          '断流重连中（第 ${task.retryCount} 次探测）',
+          '断流重连中（第 $attempt 次）',
+          '已录 ${formatBytes(task.totalBytes)}',
           ?roomPart,
           ?commentPart,
         ].join(' · ');
