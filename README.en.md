@@ -19,8 +19,10 @@ It records the **network stream**, not the screen: video comes from the same sou
   - Douyin: binary protobuf, `PushFrame → gzip → WebcastChatMessage`
 - **Concurrent multi-room recording** (up to 6 rooms), independent state per room
 - **Preview while recording** — play the segment being written, no need to wait
+- **H.265 / HEVC playback** — Xiaohongshu's 540p gear is actually HEVC; a native MediaCodec player detects the codec automatically and plays both H.265 and H.264 (seek, mute, fullscreen) instead of failing with "unsupported codec"
 - **Danmaku subtitles** — `comments.ass` (1080×1920, 42 px, 8 s right-to-left scroll, lane avoidance) and `comments.srt`
-- **Auto reconnect** on stalls; 3 failed probes ⇒ stream ended, stop automatically
+- **Auto reconnect (unlimited)** — exponential backoff 2 s → 30 s with jitter, plus an 18 s stall watchdog; after a 5-minute outage in the background it resumes into a new `partNN.flv` once the network is back. Only 2 minutes of consecutive 404/410 is treated as "stream ended"
+- **Visible reconnect state** — the task card and the persistent notification show "reconnecting (attempt N) · X MB recorded"
 - **Swipe = stop, data kept** — FLV streamed to disk and flushed every second; swiping the app away keeps everything recorded
 - **Resume after interruption** — `session.json` written every 2 s; reopen the app and continue at `part02`
 - **Library** — sort by time, per-segment playback, danmaku count, delete with optional confirmation

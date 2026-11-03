@@ -7,7 +7,10 @@ testrun/
 *.html
 !app/assets/web/*.html
 verify/*.apk
+/*.apk
 
 plaza_net.json
 *.log
+tools/netdrop_logs/
+app/android/.kotlin/
 .dsh-ops-update-*.lock

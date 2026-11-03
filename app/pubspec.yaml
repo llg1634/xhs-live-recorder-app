@@ -1,7 +1,7 @@
 name: live_recorder
 description: "小红书 / 抖音直播录制器（Android）"
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: ^3.13.5
