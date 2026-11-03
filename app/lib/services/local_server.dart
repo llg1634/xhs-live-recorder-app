@@ -9,6 +9,8 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 
 import '../models/live_room.dart';
+import '../ui/preview/debug_play_entry.dart';
+import 'flv_codec_probe.dart';
 import 'recording_manager.dart';
 
 /// 本地 HTTP 服务：
@@ -49,6 +51,8 @@ class LocalStreamServer {
       _server = await shelf_io.serve(handler, InternetAddress.loopbackIPv4, 0);
     }
     _server!.autoCompress = false;
+    // 调试入口：`am start --es play_file <绝对路径>` 直接打开回放页。
+    DebugPlayEntry.install(urlBuilder: playerUrlForFile);
   }
 
   Future<void> stop() async {
@@ -67,10 +71,15 @@ class LocalStreamServer {
       }
       if (path.startsWith('/live/') && path.endsWith('.flv')) {
         final taskId = path.substring('/live/'.length, path.length - 4);
-        return await _liveStream(taskId);
+        final offset =
+            int.tryParse(request.url.queryParameters['offset'] ?? '') ?? 0;
+        return await _liveStream(taskId, offset: offset);
       }
       if (path == '/file') {
         return await _file(request);
+      }
+      if (path == '/probe') {
+        return await _probe(request);
       }
       if (path == '/debug') {
         return _debug();
@@ -100,6 +109,37 @@ class LocalStreamServer {
     );
   }
 
+  /// 探测正在录制任务当前分段的 FLV 头（供 Flutter 在打开预览前选择解码路径）。
+  Future<Response> _probe(Request request) async {
+    final String taskId = request.url.queryParameters['taskId'] ?? '';
+    String? path;
+    if (taskId.isNotEmpty) {
+      final task = manager.taskById(taskId);
+      path = task?.currentSegment?.path ??
+          (task != null && task.segments.isNotEmpty
+              ? task.segments.last.path
+              : null);
+    } else {
+      path = request.url.queryParameters['path'];
+    }
+    if (path == null || path.isEmpty) {
+      return Response.notFound('no segment');
+    }
+    try {
+      final FlvCodecInfo info = await FlvCodecProbe.probeFile(path);
+      return Response.ok(
+        jsonEncode(info.toJson()),
+        headers: {
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'no-store',
+          'access-control-allow-origin': '*',
+        },
+      );
+    } catch (e) {
+      return Response.internalServerError(body: '$e');
+    }
+  }
+
   /// 实时预览：直接 tail 正在写入的分段文件。
   ///
   /// 不用 `recorder.previewStream` 的原因：预录头 + 实时 socket 字节在拼接处
@@ -108,7 +148,7 @@ class LocalStreamServer {
   ///
   /// **只读**：这里绝不打开写句柄，也不会改任务状态——点进预览页只应该"看"，
   /// 不能影响正在进行的录制。
-  Future<Response> _liveStream(String taskId) async {
+  Future<Response> _liveStream(String taskId, {int offset = 0}) async {
     final task = manager.taskById(taskId);
     if (task == null) return Response.notFound('task not found');
 
@@ -126,7 +166,7 @@ class LocalStreamServer {
     var cancelled = false;
 
     Future<void> pump() async {
-      var offset = 0;
+      var offsetBytes = offset < 0 ? 0 : offset;
       var idleTicks = 0;
       File? current;
 
@@ -142,7 +182,7 @@ class LocalStreamServer {
         final file = File(segmentPath);
         if (current?.path != file.path) {
           current = file;
-          offset = 0;
+          offsetBytes = 0;
           idleTicks = 0;
         }
 
@@ -152,13 +192,13 @@ class LocalStreamServer {
             continue;
           }
           final length = await file.length();
-          if (length > offset) {
+          if (length > offsetBytes) {
             final raf = await file.open();
             try {
-              await raf.setPosition(offset);
-              final bytes = await raf.read(length - offset);
+              await raf.setPosition(offsetBytes);
+              final bytes = await raf.read(length - offsetBytes);
               if (bytes.isNotEmpty && !cancelled && !controller.isClosed) {
-                offset += bytes.length;
+                offsetBytes += bytes.length;
                 idleTicks = 0;
                 try {
                   controller.add(bytes);

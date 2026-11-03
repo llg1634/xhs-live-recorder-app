@@ -11,6 +11,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import com.liquidlab.live_recorder.player.FlvPlayerPlugin
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -34,6 +35,9 @@ class MainActivity : FlutterActivity() {
     companion object {
         const val channelName = "live_recorder/foreground"
 
+        /** 调试播放入口专用通道：避免和 LaunchIntent 抢 `live_recorder/foreground` 的 handler。 */
+        const val debugChannelName = "live_recorder/debug"
+
         @Volatile
         private var sharedEngine: FlutterEngine? = null
 
@@ -54,6 +58,12 @@ class MainActivity : FlutterActivity() {
     private var probeUrl: String? = null
     private var launchWithComments: Boolean = false
 
+    /** `am start ... --es play_file <绝对路径>`：自动化验收时直接打开回放页。 */
+    private var playFile: String? = null
+
+    /** `--ei seek_ms <毫秒>`：调试回放时直接跳到指定位置（验证关键帧索引）。 */
+    private var playSeekMs: Long = 0L
+
     /** 本次 Activity 是否复用了已有引擎（true 表示 Dart 侧 main() 已经跑过）。 */
     private var reusedEngine: Boolean = false
 
@@ -62,10 +72,19 @@ class MainActivity : FlutterActivity() {
     /** 本 Activity 注册的 channel（销毁时只清理自己那一份，避免误删新实例的）。 */
     private var myChannel: MethodChannel? = null
 
+    private var debugChannel: MethodChannel? = null
+    private var myDebugChannel: MethodChannel? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         launchUrl = intent?.getStringExtra("autostart") ?: viewUrlOf(intent)
         probeUrl = intent?.getStringExtra("probe")
         launchWithComments = intent?.getBooleanExtra("comments", false) ?: false
+        playFile = intent?.getStringExtra("play_file")
+        playSeekMs = intent?.getLongExtra("seek_ms", 0L) ?: 0L
+        android.util.Log.i(
+            "FlvNative",
+            "MainActivity.onCreate play_file=$playFile seek=$playSeekMs reused=$reusedEngine",
+        )
         super.onCreate(savedInstanceState)
         // Android 13+ 必须动态申请通知权限，否则前台服务的常驻通知不显示。
         requestNotificationPermissionIfNeeded()
@@ -105,6 +124,8 @@ class MainActivity : FlutterActivity() {
         val url = intent.getStringExtra("autostart") ?: viewUrlOf(intent)
         val probe = intent.getStringExtra("probe")
         val action = intent.getStringExtra("action")
+        val file = intent.getStringExtra("play_file")
+        val seekMs = intent.getLongExtra("seek_ms", -1L)
         if (action != null) {
             invokeDart("incomingAction", action)
         }
@@ -116,10 +137,26 @@ class MainActivity : FlutterActivity() {
             // 会把同一条链接再取一次，重复开录。
             invokeDart("incomingUrl", url)
         }
+        if (file != null) {
+            playFile = file
+            invokeDebug("incomingPlayFile", file)
+        }
+        if (seekMs >= 0L) {
+            playSeekMs = seekMs
+            invokeDebug("incomingPlaySeek", seekMs)
+        }
     }
 
     private fun invokeDart(method: String, argument: Any?) {
         val ch = channel ?: return
+        try {
+            ch.invokeMethod(method, argument)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun invokeDebug(method: String, argument: Any?) {
+        val ch = debugChannel ?: return
         try {
             ch.invokeMethod(method, argument)
         } catch (_: Exception) {
@@ -175,16 +212,46 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+        // 原生 HEVC/AVC 播放器：平台视图 + 播放控制通道。引擎复用时 attach 已做幂等保护。
+        FlvPlayerPlugin.attach(flutterEngine)
+
+        val debug = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, debugChannelName)
+        debugChannel = debug
+        myDebugChannel = debug
+        debug.setMethodCallHandler { call, result ->
+            try {
+                when (call.method) {
+                    "getPlayFile" -> {
+                        android.util.Log.i("FlvNative", "getPlayFile -> $playFile")
+                        result.success(playFile)
+                        playFile = null
+                    }
+                    "getPlaySeekMs" -> {
+                        android.util.Log.i("FlvNative", "getPlaySeekMs -> $playSeekMs")
+                        result.success(playSeekMs)
+                        playSeekMs = 0L
+                    }
+                    else -> result.notImplemented()
+                }
+            } catch (e: Exception) {
+                result.error("DEBUG_ERROR", e.message, null)
+            }
+        }
+
         // 引擎已在运行、只是 Activity 被重建（或从通知栏新建任务）时，main() 不会再跑，
         // Dart 侧也就不会再调用 getLaunchUrl —— 这里把本次 intent 里的参数补投一次。
         if (reusedEngine) {
             val url = launchUrl
             val probe = probeUrl
             val withComments = launchWithComments
+            val pendingFile = playFile
+            val pendingSeek = playSeekMs
             launchUrl = null
             probeUrl = null
             launchWithComments = false
-            if (url != null || probe != null) {
+            playFile = null
+            playSeekMs = 0L
+            if (url != null || probe != null || pendingFile != null || pendingSeek > 0L) {
                 Handler(Looper.getMainLooper()).postDelayed({
                     if (url != null && withComments) {
                         // 先告知"带弹幕"，再投 url，Dart 侧按最新值处理。
@@ -192,6 +259,8 @@ class MainActivity : FlutterActivity() {
                     }
                     if (probe != null) ch.invokeMethod("incomingProbe", probe)
                     if (url != null) ch.invokeMethod("incomingUrl", url)
+                    if (pendingFile != null) invokeDebug("incomingPlayFile", pendingFile)
+                    if (pendingSeek > 0L) invokeDebug("incomingPlaySeek", pendingSeek)
                 }, 800L)
             }
         }
@@ -205,6 +274,11 @@ class MainActivity : FlutterActivity() {
             channel = null
         }
         myChannel = null
+        if (debugChannel === myDebugChannel) {
+            debugChannel?.setMethodCallHandler(null)
+            debugChannel = null
+        }
+        myDebugChannel = null
         super.cleanUpFlutterEngine(flutterEngine)
     }
 

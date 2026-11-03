@@ -6,27 +6,28 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-/// 直播/回放播放页：WebView 承载 `assets/web/player.html`（flv.js），
-/// Flutter 侧只负责“壳”——加载进度、错误重试、状态展示、沉浸式全屏。
+import '../../services/flv_codec_probe.dart';
+import '../widgets/format_utils.dart';
+import '../widgets/native_flv_player.dart';
+
+/// 直播/回放播放页。
 ///
-/// 页面（JS）通过 `PlayerBridge` 通道上报：
-/// - `{"type":"state", "phase":"loading|playing|paused|reconnect|ended|error", ...}`
-/// - `{"type":"fullscreen","on":bool}` 双击 / 页面全屏按钮
-/// - `{"type":"tap"}` 单击视频（联动隐藏/显示浮层）
-/// - `{"type":"error","message":"..."}` 视频层致命错误
+/// 播放内核按编码自动选择：
+/// - H.264/AVC → 原有 `assets/web/player.html`（flv.js）；
+/// - H.265/HEVC 或探测未知 → 原生 MediaCodec 播放器（TextureView）；
+/// - WebView 报 `CodecUnsupported` → 自动切原生。
 ///
-/// Flutter 反向调用 `window.PV`：`setImmersive / toggleMute / setMuted /
-/// reconnect / toggle / seekTo / destroy`。
-///
-/// 屏幕常亮：本次不新增 pub 依赖，不叠 Timer 兑底（JS 定时器不能阻止息屏）。
-/// Android WebView 在 `<video>` 播放期间由平台维持亮屏；如果真机上仍会息屏，
-/// 需要后续引入 wakelock_plus 之类的依赖，或在 MainActivity 加 KEEP_SCREEN_ON。
+/// Flutter 外壳（加载进度、错误遮罩、全屏/沉浸式、静音、状态胶囊、诊断面板）
+/// 在两种内核下保持一致；原生模式额外提供播放/暂停、进度拖动和时间显示。
+enum _PlayerKind { probing, web, native }
+
 class LivePreviewPage extends StatefulWidget {
   const LivePreviewPage({
     super.key,
     required this.title,
     required this.url,
     this.subtitle,
+    this.startMs = 0,
   });
 
   /// 标题（直播任务名 / 录像文件名）。
@@ -39,6 +40,9 @@ class LivePreviewPage extends StatefulWidget {
   /// 可选副标题，例如分段文件名。
   final String? subtitle;
 
+  /// 调试入口：原生回放打开时直接跳转到的起始位置（毫秒）。
+  final int startMs;
+
   @override
   State<LivePreviewPage> createState() => _LivePreviewPageState();
 }
@@ -49,7 +53,11 @@ class _LivePreviewPageState extends State<LivePreviewPage>
   static const Duration _loadTimeout = Duration(seconds: 15);
   static const Duration _overlayHideDelay = Duration(seconds: 4);
 
-  late final WebViewController _controller;
+  WebViewController? _controller;
+  NativeFlvPlayerController? _native;
+  String? _nativeSrc;
+  FlvCodecInfo? _codecInfo;
+  _PlayerKind _kind = _PlayerKind.probing;
 
   // ---------- 页面加载 ----------
   bool _pageReady = false;
@@ -66,6 +74,12 @@ class _LivePreviewPageState extends State<LivePreviewPage>
   int _videoWidth = 0;
   int _videoHeight = 0;
   String _message = '';
+  double _position = 0;
+  double _duration = 0;
+
+  // ---------- 原生进度条拖动 ----------
+  bool _dragging = false;
+  double _dragValue = 0;
 
   // ---------- 远端诊断 ----------
   String? _diag;
@@ -89,20 +103,129 @@ class _LivePreviewPageState extends State<LivePreviewPage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _isReplay = _detectReplay(widget.url);
+    _bootstrap();
+  }
 
-    _controller = WebViewController()
+  @override
+  void dispose() {
+    _loadWatchdog?.cancel();
+    _overlayTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _native?.dispose();
+    // 让页面销毁 flv.js 播放器、清理定时器（WebView 释放前尽力而为）。
+    try {
+      _controller
+          ?.runJavaScript(
+            'window.PV && window.PV.destroy && window.PV.destroy();',
+          )
+          .catchError((Object _) {});
+    } catch (_) {}
+    // 离开页面务必恢复系统 UI，避免别处仍是全屏。
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant LivePreviewPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url == widget.url) return;
+    _loadWatchdog?.cancel();
+    _native?.dispose();
+    _native = null;
+    _nativeSrc = null;
+    _codecInfo = null;
+    _kind = _PlayerKind.probing;
+    _isReplay = _detectReplay(widget.url);
+    setState(() {
+      _loadError = null;
+      _pageReady = false;
+      _progress = 0;
+      _phase = 'loading';
+      _retry = 0;
+      _bitrateKbps = 0;
+      _message = '';
+      _position = 0;
+      _duration = 0;
+      _sentImmersive = null;
+    });
+    _bootstrap();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 从后台回来时 Android 可能已重置沉浸式标记，重新应用一次。
+    if (state == AppLifecycleState.resumed && mounted) {
+      _appliedImmersive = null;
+      _applySystemUi(_immersiveFor(MediaQuery.orientationOf(context)));
+    }
+  }
+
+  // ===================== 探测 / 启动 =====================
+
+  static String _srcOf(String url) {
+    try {
+      return Uri.parse(url).queryParameters['src'] ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  Future<void> _bootstrap() async {
+    final FlvCodecInfo? info = await _probeCodec();
+    if (!mounted) return;
+    _codecInfo = info;
+    debugPrint(
+      '[preview] probe codec=${info?.videoCodecName ?? "unknown"} '
+      'codecId=${info?.videoCodecId ?? 0} seq=${info?.hasSequenceHeader ?? false} '
+      'size=${info?.width ?? 0}x${info?.height ?? 0}',
+    );
+    // AVC 继续走原 WebView；HEVC / 未知走原生（原生同样支持 AVC）。
+    if (info != null && info.isAvc) {
+      _startWeb();
+    } else {
+      _startNative();
+    }
+  }
+
+  Future<FlvCodecInfo?> _probeCodec() async {
+    try {
+      final String src = _srcOf(widget.url);
+      if (src.startsWith('/file')) {
+        final Uri inner = Uri.parse(src);
+        final String? path = inner.queryParameters['path'];
+        if (path != null && path.isNotEmpty) {
+          return await FlvCodecProbe.probeFile(path)
+              .timeout(const Duration(seconds: 5));
+        }
+      } else if (src.startsWith('/live/') && src.endsWith('.flv')) {
+        final Uri outer = Uri.parse(widget.url);
+        final String taskId = src.substring(6, src.length - 4);
+        final String base = '${outer.scheme}://${outer.authority}';
+        return await FlvCodecProbe.probeTask(base, taskId)
+            .timeout(const Duration(seconds: 5));
+      }
+    } catch (e) {
+      debugPrint('[preview] codec probe failed: $e');
+    }
+    return null;
+  }
+
+  void _startWeb() {
+    final WebViewController controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFF000000))
       ..addJavaScriptChannel(_channelName, onMessageReceived: _onBridgeMessage)
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (int progress) {
-            if (!mounted || _loadError != null) return;
+            if (!mounted || _loadError != null || _kind != _PlayerKind.web) {
+              return;
+            }
             if (progress == _progress) return;
             setState(() => _progress = progress);
           },
           onPageStarted: (String url) {
-            if (!mounted) return;
+            if (!mounted || _kind != _PlayerKind.web) return;
             setState(() {
               _pageReady = false;
               _progress = 0;
@@ -110,7 +233,11 @@ class _LivePreviewPageState extends State<LivePreviewPage>
             _startLoadWatchdog();
           },
           onPageFinished: (String url) {
-            if (!mounted || _loadError != null) return;
+            if (!mounted ||
+                _loadError != null ||
+                _kind != _PlayerKind.web) {
+              return;
+            }
             _loadWatchdog?.cancel();
             setState(() {
               _pageReady = true;
@@ -128,74 +255,114 @@ class _LivePreviewPageState extends State<LivePreviewPage>
           },
           onHttpError: (HttpResponseError error) {
             if (_pageReady) return;
-            final status = error.response?.statusCode ?? 0;
+            final int status = error.response?.statusCode ?? 0;
             if (status >= 400) {
               _failPage('播放页返回 HTTP $status');
             }
           },
         ),
       );
-
-    final String target = widget.url.trim();
-    if (target.isEmpty) {
-      _loadError = '缺少播放地址（url 为空）';
-      _phase = 'error';
-      _message = _loadError!;
-    } else {
-      _controller.loadRequest(Uri.parse(target));
-      _startLoadWatchdog();
-    }
-  }
-
-  @override
-  void dispose() {
-    _loadWatchdog?.cancel();
-    _overlayTimer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
-    // 让页面销毁 flv.js 播放器、清理定时器（WebView 释放前尽力而为）。
-    try {
-      _controller
-          .runJavaScript(
-            'window.PV && window.PV.destroy && window.PV.destroy();',
-          )
-          .catchError((Object _) {});
-    } catch (_) {}
-    // 离开页面务必恢复系统 UI，避免别处仍是全屏。
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    super.dispose();
-  }
-
-  @override
-  void didUpdateWidget(covariant LivePreviewPage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.url == widget.url) return;
-    // 同一个路由换了地址：重新识别模式并重载页面。
-    _isReplay = _detectReplay(widget.url);
+    _controller = controller;
+    debugPrint('[preview] web player start (flv.js): ${widget.url}');
     setState(() {
-      _loadError = null;
+      _kind = _PlayerKind.web;
       _pageReady = false;
       _progress = 0;
       _phase = 'loading';
-      _retry = 0;
-      _bitrateKbps = 0;
       _message = '';
-      _sentImmersive = null;
     });
+
     final String target = widget.url.trim();
     if (target.isEmpty) {
       _failPage('缺少播放地址（url 为空）');
     } else {
+      controller.loadRequest(Uri.parse(target));
       _startLoadWatchdog();
-      _controller.loadRequest(Uri.parse(target));
     }
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // 从后台回来时 Android 可能已重置沉浸式标记，重新应用一次。
-    if (state == AppLifecycleState.resumed && mounted) {
-      _appliedImmersive = null;
-      _applySystemUi(_immersiveFor(MediaQuery.orientationOf(context)));
+  String? _nativeSource() {
+    final String src = _srcOf(widget.url);
+    if (src.startsWith('http://') || src.startsWith('https://')) return src;
+    if (src.startsWith('/file')) {
+      try {
+        final String? path = Uri.parse(src).queryParameters['path'];
+        if (path != null && path.isNotEmpty) return path;
+      } catch (_) {}
+      return null;
+    }
+    if (src.startsWith('/live/')) {
+      try {
+        final Uri outer = Uri.parse(widget.url);
+        return '${outer.scheme}://${outer.authority}$src';
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  void _startNative() {
+    _native?.dispose();
+    _native = null;
+    _nativeSrc = _nativeSource();
+    setState(() {
+      _kind = _PlayerKind.native;
+      _pageReady = false;
+      _phase = 'loading';
+      _retry = 0;
+      _position = 0;
+      _duration = 0;
+      _videoWidth = 0;
+      _videoHeight = 0;
+      _message = '';
+      _loadError = null;
+    });
+    if (_nativeSrc == null) {
+      setState(() {
+        _phase = 'error';
+        _message = '无法解析视频地址';
+      });
+      return;
+    }
+    final NativeFlvPlayerController controller =
+        NativeFlvPlayerController(isLive: !_isReplay);
+    controller.addListener(_onNativeState);
+    _native = controller;
+    debugPrint(
+      '[preview] native player start: src=$_nativeSrc live=${!_isReplay} '
+      'codec=${_codecInfo?.videoCodecName ?? "unknown"}',
+    );
+  }
+
+  void _onNativeState() {
+    final NativeFlvPlayerController? controller = _native;
+    if (controller == null || !mounted) return;
+    setState(() {
+      _phase = controller.phase;
+      _position = controller.position;
+      _duration = controller.duration;
+      _videoWidth = controller.width;
+      _videoHeight = controller.height;
+      _muted = controller.muted;
+      _retry = controller.retry;
+      _message = controller.message;
+      if (controller.phase == 'error' && _diag == null) {
+        _diag = const JsonEncoder.withIndent('  ').convert(controller.diag);
+      }
+    });
+  }
+
+  /// WebView 报编码不支持时无缝切换到原生播放器。
+  void _switchToNative({String? reason}) {
+    if (_kind == _PlayerKind.native) return;
+    debugPrint('[preview] switch to native: ${reason ?? "codec unsupported"}');
+    _loadWatchdog?.cancel();
+    _loadError = null;
+    _pageReady = false;
+    _startNative();
+    if (reason != null && reason.isNotEmpty) {
+      setState(() => _message = reason);
     }
   }
 
@@ -236,8 +403,10 @@ class _LivePreviewPageState extends State<LivePreviewPage>
 
   Future<void> _runJs(String script) async {
     if (!_pageReady) return;
+    final WebViewController? controller = _controller;
+    if (controller == null) return;
     try {
-      await _controller.runJavaScript(script);
+      await controller.runJavaScript(script);
     } catch (_) {
       // WebView 已销毁 / 页面已跳走，忽略。
     }
@@ -255,7 +424,7 @@ class _LivePreviewPageState extends State<LivePreviewPage>
   }
 
   void _sendImmersive(bool immersive) {
-    if (!_pageReady) return;
+    if (_kind != _PlayerKind.web || !_pageReady) return;
     if (_sentImmersive == immersive) return;
     _sentImmersive = immersive;
     _runJs(
@@ -267,7 +436,7 @@ class _LivePreviewPageState extends State<LivePreviewPage>
   // ===================== 页面状态回调 =====================
 
   void _onBridgeMessage(JavaScriptMessage message) {
-    if (!mounted) return;
+    if (!mounted || _kind != _PlayerKind.web) return;
     dynamic decoded;
     try {
       decoded = jsonDecode(message.message);
@@ -302,6 +471,14 @@ class _LivePreviewPageState extends State<LivePreviewPage>
     }
   }
 
+  bool _looksLikeCodecUnsupported(String message) {
+    final String lower = message.toLowerCase();
+    return lower.contains('codecunsupported') ||
+        lower.contains('编码不支持') ||
+        lower.contains('h.265') ||
+        lower.contains('hevc');
+  }
+
   void _applyState(Map<dynamic, dynamic> data) {
     final String phase = data['phase']?.toString() ?? 'loading';
     final bool muted = data['muted'] == true;
@@ -311,6 +488,11 @@ class _LivePreviewPageState extends State<LivePreviewPage>
     final int w = _asInt(data['width']);
     final int h = _asInt(data['height']);
     final String message = data['message']?.toString() ?? '';
+
+    if (phase == 'error' && _looksLikeCodecUnsupported(message)) {
+      _switchToNative(reason: message);
+      return;
+    }
 
     if (phase == _phase &&
         muted == _muted &&
@@ -331,6 +513,8 @@ class _LivePreviewPageState extends State<LivePreviewPage>
       _videoWidth = w;
       _videoHeight = h;
       _message = message;
+      _position = _asDouble(data['position'], _position);
+      _duration = _asDouble(data['duration'], _duration);
       if (_loadError != null && phase != 'error') {
         // 页面已能跑起来，撤掉“加载失败”遮罩。
         _loadError = null;
@@ -341,10 +525,18 @@ class _LivePreviewPageState extends State<LivePreviewPage>
     }
   }
 
-  /// 出错时取一次页面诊断信息（WebView UA / MSE / 最近错误 / 数据间隔），
-  /// 方便你不在现场也能定位“卡在加载中”这类问题。
+  /// 出错时取一次诊断信息（WebView UA / MSE / 最近错误 / 数据间隔，或原生解码器状态）。
   void _requestDiag() {
-    if (!mounted || !_pageReady || _diagLoading) return;
+    if (!mounted || _diagLoading) return;
+    if (_kind == _PlayerKind.native) {
+      final NativeFlvPlayerController? controller = _native;
+      if (controller == null) return;
+      setState(() {
+        _diag = const JsonEncoder.withIndent('  ').convert(controller.diag);
+      });
+      return;
+    }
+    if (!_pageReady) return;
     _diagLoading = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _fetchDiag();
@@ -352,8 +544,13 @@ class _LivePreviewPageState extends State<LivePreviewPage>
   }
 
   Future<void> _fetchDiag() async {
+    final WebViewController? controller = _controller;
+    if (controller == null) {
+      _diagLoading = false;
+      return;
+    }
     try {
-      final Object raw = await _controller.runJavaScriptReturningResult(
+      final Object raw = await controller.runJavaScriptReturningResult(
         'window.PV && window.PV.diag ? window.PV.diag() : ""',
       );
       String text = raw.toString();
@@ -381,6 +578,11 @@ class _LivePreviewPageState extends State<LivePreviewPage>
     if (value is int) return value;
     if (value is num) return value.toInt();
     return 0;
+  }
+
+  static double _asDouble(Object? value, double fallback) {
+    if (value is num) return value.toDouble();
+    return fallback;
   }
 
   // ===================== 全屏 / 浮层 =====================
@@ -430,6 +632,22 @@ class _LivePreviewPageState extends State<LivePreviewPage>
   // ===================== 操作 =====================
 
   Future<void> _reloadPage() async {
+    if (_kind == _PlayerKind.native) {
+      setState(() {
+        _loadError = null;
+        _pageReady = false;
+        _phase = 'loading';
+        _retry = 0;
+        _message = '';
+        _diag = null;
+      });
+      await _native?.reopen();
+      return;
+    }
+    if (_kind == _PlayerKind.probing) {
+      await _bootstrap();
+      return;
+    }
     setState(() {
       _loadError = null;
       _pageReady = false;
@@ -442,11 +660,21 @@ class _LivePreviewPageState extends State<LivePreviewPage>
     });
     _startLoadWatchdog();
     try {
-      await _controller.reload();
+      await _controller?.reload();
     } catch (_) {}
   }
 
   Future<void> _retryPlayback() async {
+    if (_kind == _PlayerKind.native) {
+      setState(() {
+        _phase = 'loading';
+        _retry = 0;
+        _message = '';
+        _diag = null;
+      });
+      await _native?.reopen();
+      return;
+    }
     if (_loadError != null) {
       await _reloadPage();
       return;
@@ -455,12 +683,29 @@ class _LivePreviewPageState extends State<LivePreviewPage>
   }
 
   void _toggleMute() {
+    if (_kind == _PlayerKind.native) {
+      _native?.setMuted(!_muted);
+      return;
+    }
     _runJs('window.PV && window.PV.toggleMute && window.PV.toggleMute();');
+  }
+
+  void _togglePlayPause() {
+    final NativeFlvPlayerController? controller = _native;
+    if (controller == null) return;
+    if (_phase == 'playing') {
+      controller.pause();
+    } else {
+      controller.play();
+    }
   }
 
   // ===================== 文案 =====================
 
   String get _modeLabel => _isReplay ? '录像回放' : '直播预览';
+
+  String get _engineLabel =>
+      _kind == _PlayerKind.native ? '原生 MediaCodec' : 'WebView flv.js';
 
   String get _phaseLabel {
     switch (_phase) {
@@ -468,6 +713,8 @@ class _LivePreviewPageState extends State<LivePreviewPage>
         return _isReplay ? '播放中' : '直播中';
       case 'loading':
         return _retry > 0 ? '重连中（第 $_retry 次）' : '连接中';
+      case 'buffering':
+        return '缓冲中';
       case 'reconnect':
         return '重连中（第 $_retry 次）';
       case 'paused':
@@ -487,6 +734,7 @@ class _LivePreviewPageState extends State<LivePreviewPage>
     switch (_phase) {
       case 'playing':
         return const Color(0xFF31D07A);
+      case 'buffering':
       case 'reconnect':
         return const Color(0xFFFFB020);
       case 'error':
@@ -509,6 +757,26 @@ class _LivePreviewPageState extends State<LivePreviewPage>
   String? get _resolutionLabel {
     if (_videoWidth <= 0 || _videoHeight <= 0) return null;
     return '$_videoWidth × $_videoHeight';
+  }
+
+  String? get _codecLabel {
+    final FlvCodecInfo? info = _codecInfo;
+    if (info == null) return null;
+    if (info.isHevc) return 'H.265 / HEVC';
+    if (info.isAvc) return 'H.264 / AVC';
+    return null;
+  }
+
+  String get _loadStatusLabel {
+    if (_kind == _PlayerKind.native) {
+      if (_phase == 'error') return '失败';
+      if ((_native?.decoder ?? '').isNotEmpty) return '原生解码器已启动';
+      return '原生播放器启动中';
+    }
+    if (_kind == _PlayerKind.probing) return '正在探测编码';
+    return _pageReady
+        ? '播放页已加载'
+        : (_loadError != null ? '失败' : '加载中 $_progress%');
   }
 
   // ===================== build =====================
@@ -614,9 +882,48 @@ class _LivePreviewPageState extends State<LivePreviewPage>
       color: Colors.black,
       child: Stack(
         fit: StackFit.expand,
-        children: <Widget>[
-          WebViewWidget(controller: _controller),
-          // 页面加载进度（只在首屏加载时出现，避免遮挡播放）。
+        children: _buildPlayerLayers(),
+      ),
+    );
+  }
+
+  List<Widget> _buildPlayerLayers() {
+    switch (_kind) {
+      case _PlayerKind.probing:
+        return <Widget>[
+          const Center(
+            child: SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.4,
+                color: Colors.white70,
+              ),
+            ),
+          ),
+          const Positioned(
+            left: 0,
+            right: 0,
+            bottom: 14,
+            child: Text(
+              '正在检测视频编码…',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white60, fontSize: 12),
+            ),
+          ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: LinearProgressIndicator(
+              minHeight: 2,
+              backgroundColor: Colors.white12,
+            ),
+          ),
+        ];
+      case _PlayerKind.web:
+        return <Widget>[
+          if (_controller != null) WebViewWidget(controller: _controller!),
           if (!_pageReady && _loadError == null)
             Positioned(
               top: 0,
@@ -631,7 +938,363 @@ class _LivePreviewPageState extends State<LivePreviewPage>
               ),
             ),
           if (_loadError != null) _buildLoadErrorOverlay(),
-        ],
+        ];
+      case _PlayerKind.native:
+        return _buildNativeLayers();
+    }
+  }
+
+  List<Widget> _buildNativeLayers() {
+    final NativeFlvPlayerController? controller = _native;
+    final String? src = _nativeSrc;
+    if (controller == null || src == null) {
+      return <Widget>[
+        Center(
+          child: Text(
+            _message.isEmpty ? '原生播放器不可用' : _message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70, fontSize: 13),
+          ),
+        ),
+      ];
+    }
+    return <Widget>[
+      NativeFlvPlayer(
+        controller: controller,
+        src: src,
+        isLive: !_isReplay,
+        startMs: widget.startMs,
+      ),
+      Positioned.fill(
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: _toggleOverlay,
+          onDoubleTap: () {
+            final Orientation o = MediaQuery.orientationOf(context);
+            _setImmersive(!_immersiveFor(o));
+          },
+        ),
+      ),
+      if (!_overlayHidden) _buildNativeStatusPill(),
+      if (_phase == 'loading' || _phase == 'buffering')
+        _buildNativeBufferingOverlay(),
+      if (!_overlayHidden) _buildNativeControls(context),
+      if (_phase == 'error') _buildNativeErrorOverlay(),
+    ];
+  }
+
+  Widget _buildNativeStatusPill() {
+    final Color color = _phaseColor(Theme.of(context).colorScheme);
+    return Positioned(
+      left: 10,
+      top: 8,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.52),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              _phaseLabel,
+              style: const TextStyle(color: Colors.white70, fontSize: 11),
+            ),
+            if (_resolutionLabel != null) ...<Widget>[
+              const SizedBox(width: 6),
+              Text(
+                _resolutionLabel!,
+                style: const TextStyle(color: Colors.white38, fontSize: 10),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNativeBufferingOverlay() {
+    final String text = _message.isNotEmpty
+        ? _message
+        : (_phase == 'loading' ? '正在启动解码器…' : '正在缓冲…');
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: ColoredBox(
+          color: Colors.black.withValues(alpha: 0.30),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                const SizedBox(
+                  width: 26,
+                  height: 26,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    color: Colors.white70,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(
+                    text,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNativeErrorOverlay() {
+    final String text = _message.isEmpty ? '原生播放器出错' : _message;
+    final bool unsupported =
+        text.contains('H.265') || text.contains('H.264') || text.contains('硬解');
+    return Positioned.fill(
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: 0.86),
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                const Icon(
+                  Icons.error_outline_rounded,
+                  color: Color(0xFFFF5B52),
+                  size: 36,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  unsupported ? '当前设备无法硬解该视频' : '播放失败',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  text,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    height: 1.5,
+                  ),
+                ),
+                if (unsupported)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: Text(
+                      '可尝试切换到 H.264 档位录制，或使用支持 H.265 硬解的设备。',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Color(0xFFFFB020),
+                        fontSize: 12,
+                        height: 1.5,
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 10,
+                  children: <Widget>[
+                    FilledButton.icon(
+                      onPressed: _retryPlayback,
+                      icon: const Icon(Icons.refresh_rounded, size: 18),
+                      label: const Text('重试'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () => Navigator.of(context).maybePop(),
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                      label: const Text('返回'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNativeControls(BuildContext context) {
+    final bool showSlider = _isReplay && _duration > 0.05;
+    final double sliderMax = showSlider ? _duration : 1;
+    final double sliderValue = (_dragging ? _dragValue : _position)
+        .clamp(0.0, sliderMax)
+        .toDouble();
+    final Orientation orientation = MediaQuery.orientationOf(context);
+    final bool immersive = _immersiveFor(orientation);
+    final String positionText =
+        formatDuration(Duration(milliseconds: (_position * 1000).round()));
+    final String durationText =
+        formatDuration(Duration(milliseconds: (_duration * 1000).round()));
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.bottomCenter,
+            end: Alignment.topCenter,
+            colors: <Color>[Color(0xE6000000), Color(0x00000000)],
+          ),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 22, 8, 4),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                if (showSlider)
+                  Row(
+                    children: <Widget>[
+                      Text(
+                        positionText,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 11,
+                          fontFeatures: <FontFeature>[
+                            FontFeature.tabularFigures(),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: SliderTheme(
+                          data: SliderThemeData(
+                            trackHeight: 2,
+                            activeTrackColor: Colors.white,
+                            inactiveTrackColor: Colors.white24,
+                            thumbColor: Colors.white,
+                            overlayColor: Colors.white24,
+                            thumbShape: const RoundSliderThumbShape(
+                              enabledThumbRadius: 6,
+                            ),
+                            overlayShape: const RoundSliderOverlayShape(
+                              overlayRadius: 14,
+                            ),
+                          ),
+                          child: Slider(
+                            value: sliderValue,
+                            max: sliderMax,
+                            onChangeStart: (double value) {
+                              setState(() {
+                                _dragging = true;
+                                _dragValue = value;
+                              });
+                              _overlayTimer?.cancel();
+                            },
+                            onChanged: (double value) {
+                              setState(() => _dragValue = value);
+                            },
+                            onChangeEnd: (double value) {
+                              setState(() => _dragging = false);
+                              _native?.seekTo(
+                                Duration(
+                                  milliseconds: (value * 1000).round(),
+                                ),
+                              );
+                              if (_immersiveFor(
+                                MediaQuery.orientationOf(context),
+                              )) {
+                                _scheduleOverlayHide();
+                              }
+                            },
+                          ),
+                        ),
+                      ),
+                      Text(
+                        durationText,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 11,
+                          fontFeatures: <FontFeature>[
+                            FontFeature.tabularFigures(),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                Row(
+                  children: <Widget>[
+                    _NativeIconButton(
+                      tooltip: _phase == 'playing' ? '暂停' : '播放',
+                      icon: _phase == 'playing'
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
+                      onPressed: _togglePlayPause,
+                    ),
+                    _NativeIconButton(
+                      tooltip: _muted ? '开启声音' : '静音',
+                      icon: _muted
+                          ? Icons.volume_off_rounded
+                          : Icons.volume_up_rounded,
+                      onPressed: _toggleMute,
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        _isReplay
+                            ? '$positionText / ${_duration > 0 ? durationText : "--:--"}'
+                            : '直播 · $positionText',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                    if (!_isReplay)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFF2B52).withValues(alpha: 0.18),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: const Text(
+                          'LIVE',
+                          style: TextStyle(
+                            color: Color(0xFFFF6B84),
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.6,
+                          ),
+                        ),
+                      ),
+                    _NativeIconButton(
+                      tooltip: immersive ? '退出全屏' : '全屏',
+                      icon: immersive
+                          ? Icons.fullscreen_exit_rounded
+                          : Icons.fullscreen_rounded,
+                      onPressed: () => _setImmersive(!immersive),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -793,6 +1456,7 @@ class _LivePreviewPageState extends State<LivePreviewPage>
       if (_retry > 0) '重连 $_retry 次',
       ?_resolutionLabel,
       ?_bitrateLabel,
+      ?_codecLabel,
     ];
     return Positioned(
       left: 0,
@@ -999,6 +1663,8 @@ class _LivePreviewPageState extends State<LivePreviewPage>
                   final String text = <String>[
                     'title=${widget.title}',
                     'url=${widget.url}',
+                    'engine=$_engineLabel',
+                    'codec=${_codecLabel ?? "unknown"}',
                     'error=${_loadError ?? ''}',
                     _diag ?? '',
                   ].join('\n');
@@ -1054,6 +1720,12 @@ class _LivePreviewPageState extends State<LivePreviewPage>
         color: scheme.onSurfaceVariant,
         icon: _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
       ),
+      if (_codecLabel != null)
+        _StatusChip(
+          label: _codecLabel!,
+          color: scheme.onSurfaceVariant,
+          icon: Icons.movie_filter_rounded,
+        ),
       if (_retry > 0)
         _StatusChip(
           label: '重连 $_retry 次',
@@ -1144,10 +1816,11 @@ class _LivePreviewPageState extends State<LivePreviewPage>
         ),
         const SizedBox(height: 20),
         _buildHintCard(context),
-        if (_diag != null || _loadError != null) ...<Widget>[
-          const SizedBox(height: 16),
-          _buildDiagCard(context),
-        ],
+        if (_diag != null || _loadError != null || _kind == _PlayerKind.native)
+          ...<Widget>[
+            const SizedBox(height: 16),
+            _buildDiagCard(context),
+          ],
       ],
     );
   }
@@ -1155,12 +1828,28 @@ class _LivePreviewPageState extends State<LivePreviewPage>
   Widget _buildDetailCard(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final ColorScheme scheme = theme.colorScheme;
+    final NativeFlvPlayerController? controller = _native;
     final List<_ListEntry> entries = <_ListEntry>[
-      _ListEntry(
-        '加载状态',
-        _pageReady ? '播放页已加载' : (_loadError != null ? '失败' : '加载中 $_progress%'),
-      ),
+      _ListEntry('加载状态', _loadStatusLabel),
       _ListEntry('连接状态', _phaseLabel),
+      _ListEntry('播放内核', _engineLabel),
+      if (_codecLabel != null)
+        _ListEntry(
+          '视频编码',
+          '$_codecLabel${_codecInfo?.hasSequenceHeader == true ? " · 含序列头" : ""}',
+        ),
+      if (controller != null && controller.decoder.isNotEmpty)
+        _ListEntry('解码器', controller.decoder),
+      if (controller != null && controller.frames > 0)
+        _ListEntry('解码帧数', '${controller.frames} 帧'),
+      if (controller != null && controller.audioStarted)
+        _ListEntry('音轨', 'AudioTrack 已启动（${controller.audioFrames} 帧）'),
+      if (_kind == _PlayerKind.native && _isReplay)
+        _ListEntry(
+          '播放进度',
+          '${formatDuration(Duration(milliseconds: (_position * 1000).round()))}'
+              ' / ${formatDuration(Duration(milliseconds: (_duration * 1000).round()))}',
+        ),
       if (_resolutionLabel != null) _ListEntry('分辨率', _resolutionLabel!),
       if (_bitrateLabel != null) _ListEntry('实时码率', _bitrateLabel!),
       if (_speedKbps > 0) _ListEntry('上游速率', '$_speedKbps KB/s'),
@@ -1246,9 +1935,13 @@ class _LivePreviewPageState extends State<LivePreviewPage>
           const SizedBox(height: 8),
           Text(
             _isReplay
-                ? '· 页面内可拖动进度条、播放/暂停、调音量\n'
-                      '· 双击视频进入全屏，单击显示/隐藏控件\n'
-                      '· 跳过已缓存区间会给出提示'
+                ? (_kind == _PlayerKind.native
+                      ? '· 底部可拖动进度条、播放/暂停、调音量\n'
+                            '· 原生解码：H.265 走 MediaCodec 硬解，拖动按关键帧跳转\n'
+                            '· 双击视频进入全屏，单击显示/隐藏控件'
+                      : '· 页面内可拖动进度条、播放/暂停、调音量\n'
+                            '· 双击视频进入全屏，单击显示/隐藏控件\n'
+                            '· 跳过已缓存区间会给出提示')
                 : '· 直播流断开会自动重连（每 2 秒一次，无限重试）\n'
                       '· 双击视频进入全屏，单击显示/隐藏控件\n'
                       '· 默认静音起播，点喇叭开启声音',
@@ -1260,6 +1953,32 @@ class _LivePreviewPageState extends State<LivePreviewPage>
         ],
       ),
     );
+  }
+}
+
+class _NativeIconButton extends StatelessWidget {
+  const _NativeIconButton({
+    required this.icon,
+    required this.onPressed,
+    this.tooltip,
+  });
+
+  final IconData icon;
+  final VoidCallback onPressed;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget button = InkResponse(
+      onTap: onPressed,
+      radius: 22,
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Icon(icon, color: Colors.white, size: 22),
+      ),
+    );
+    if (tooltip == null) return button;
+    return Tooltip(message: tooltip!, child: button);
   }
 }
 
