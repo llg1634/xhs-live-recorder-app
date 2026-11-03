@@ -119,7 +119,11 @@ class RecordingForegroundService : Service() {
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOngoing(true)
+            .setOnlyAlertOnce(true) // 「重连中」文案频繁更新时不要反复响/弹
             .setShowWhen(false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            builder.setCategory(Notification.CATEGORY_SERVICE)
+        }
         if (pending != null) builder.setContentIntent(pending)
         return builder.build()
     }

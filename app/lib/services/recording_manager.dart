@@ -10,6 +10,7 @@ import '../models/quality.dart';
 import '../models/record_task.dart';
 import 'comment_capture.dart';
 import 'flv_recorder.dart';
+import 'foreground_service.dart';
 import 'link_resolver.dart';
 import 'session_store.dart';
 import 'storage_service.dart';
@@ -33,7 +34,7 @@ class RecordingManager extends ChangeNotifier {
 
   /// 抖音需要运行时解析带签名的 FLV 地址；为空时抖音任务会提示未支持。
   final Future<String> Function(LiveRoom room, RecordQuality quality)?
-      douyinUrlResolver;
+  douyinUrlResolver;
 
   /// 当前画质偏好（由设置页同步）。
   RecordQuality recordQuality = RecordQuality.highest;
@@ -45,6 +46,14 @@ class RecordingManager extends ChangeNotifier {
 
   final Map<String, RecordTask> _tasks = {};
   final Map<String, FlvRecorder> _recorders = {};
+
+  /// 每个任务一条 session.json 写入链。
+  ///
+  /// session.json 是「先写 .tmp 再 rename」；心跳和状态变更同时触发时，
+  /// 两个 unawaited save 会抢同一个 .tmp，Android 上表现为
+  /// PathNotFound / Text file busy，任务状态反而丢。这里严格串行化。
+  final Map<String, Future<void>> _saveChains = {};
+
   final Uuid _uuid = const Uuid();
 
   /// 本进程 pid：用来区分「session.json 是不是本进程里另一个实例写的」。
@@ -81,7 +90,9 @@ class RecordingManager extends ChangeNotifier {
     try {
       final List<Directory> dirs = await storage.listSessions();
       final List<RecordTask> restored = await sessions.loadAll(dirs);
-      final DateTime cutoff = DateTime.now().subtract(const Duration(hours: 12));
+      final DateTime cutoff = DateTime.now().subtract(
+        const Duration(hours: 12),
+      );
       var changed = false;
       for (final RecordTask task in restored) {
         if (_tasks.containsKey(task.id)) continue;
@@ -95,17 +106,23 @@ class RecordingManager extends ChangeNotifier {
             task.externalOwner = true;
             task.state = TaskState.recording;
             task.errorMessage = null;
-            debugPrint('[restore] ${task.id} owned by live instance, attach as external');
+            debugPrint(
+              '[restore] ${task.id} owned by live instance, attach as external',
+            );
           } else {
             // 超过 24 小时的中断任务不再放回录制页（文件仍在录像页里）。
             final DateTime? saved = task.savedAt;
             if (saved != null &&
-                saved.isBefore(DateTime.now().subtract(const Duration(hours: 24)))) {
+                saved.isBefore(
+                  DateTime.now().subtract(const Duration(hours: 24)),
+                )) {
               continue;
             }
             // 上次进程没来得及收尾：标记中断，文件保留，可继续录制。
             task.state = TaskState.interrupted;
             task.currentSegment = null;
+            task.reconnectAttempt = 0;
+            task.nextRetryAt = null;
             task.endedAt ??= DateTime.now();
             task.errorMessage ??= '录制已停止（应用界面重建），已录内容已保留，可继续录制';
           }
@@ -156,13 +173,16 @@ class RecordingManager extends ChangeNotifier {
           existing.bytes = bytes;
           merged.add(existing);
         } else {
-          merged.add(RecordSegment(
-            path: file.path,
-            index: FlvRecorder.segmentIndexFromPath(file.path) ??
-                merged.length + 1,
-            startedAt: await file.lastModified(),
-            bytes: bytes,
-          ));
+          merged.add(
+            RecordSegment(
+              path: file.path,
+              index:
+                  FlvRecorder.segmentIndexFromPath(file.path) ??
+                  merged.length + 1,
+              startedAt: await file.lastModified(),
+              bytes: bytes,
+            ),
+          );
         }
       }
       task.segments
@@ -206,7 +226,7 @@ class RecordingManager extends ChangeNotifier {
         }
         continue;
       }
-      unawaited(sessions.save(task));
+      _persistTask(task);
     }
   }
 
@@ -233,13 +253,26 @@ class RecordingManager extends ChangeNotifier {
     task.endedAt ??= DateTime.now();
     task.errorMessage = message;
     task.currentSegment = null;
+    task.reconnectAttempt = 0;
+    task.nextRetryAt = null;
     _persistTask(task);
     if (!_disposed) notifyListeners();
   }
 
   void _persistTask(RecordTask task) {
     if (task.outputDir == null) return;
-    unawaited(sessions.save(task));
+    final Future<void> previous = _saveChains[task.id] ?? Future<void>.value();
+    final Future<void> next = previous
+        .then((_) => sessions.save(task))
+        .catchError((Object e) {
+          debugPrint('[session] ${task.id} save chain failed: $e');
+        });
+    _saveChains[task.id] = next;
+    unawaited(
+      next.whenComplete(() {
+        if (identical(_saveChains[task.id], next)) _saveChains.remove(task.id);
+      }),
+    );
   }
 
   /// 继续一个被中断的任务：复用原目录，分段号接着往后排。
@@ -260,6 +293,9 @@ class RecordingManager extends ChangeNotifier {
     task.currentSegment = null;
     task.externalOwner = false;
     task.retryCount = 0;
+    task.reconnectAttempt = 0;
+    task.lastErrorText = null;
+    task.nextRetryAt = null;
     task.probeFailCount = 0;
 
     // 重新扫描已有分段，保证接着 part0N 继续写，不覆盖旧文件。
@@ -269,12 +305,16 @@ class RecordingManager extends ChangeNotifier {
     for (final File f in files) {
       final int bytes = await f.length();
       total += bytes;
-      task.segments.add(RecordSegment(
-        path: f.path,
-        index: FlvRecorder.segmentIndexFromPath(f.path) ?? task.segments.length + 1,
-        startedAt: await f.lastModified(),
-        bytes: bytes,
-      ));
+      task.segments.add(
+        RecordSegment(
+          path: f.path,
+          index:
+              FlvRecorder.segmentIndexFromPath(f.path) ??
+              task.segments.length + 1,
+          startedAt: await f.lastModified(),
+          bytes: bytes,
+        ),
+      );
     }
     // 以磁盘为准重算总字节：session.json 里的值可能落后于实际写入。
     task.totalBytes = total;
@@ -287,7 +327,10 @@ class RecordingManager extends ChangeNotifier {
   /// 新建录制任务（不会阻塞 UI，立即返回任务对象）。
   ///
   /// [withComments] 为 true 时同时采集弹幕（仅小红书支持）。
-  Future<RecordTask> startTask(String rawInput, {bool withComments = false}) async {
+  Future<RecordTask> startTask(
+    String rawInput, {
+    bool withComments = false,
+  }) async {
     if (activeCount >= maxConcurrentTasks) {
       throw StateError('同时录制数已达上限（$maxConcurrentTasks）');
     }
@@ -307,8 +350,10 @@ class RecordingManager extends ChangeNotifier {
 
       final room = await resolver.resolve(task.rawInput);
       task.room = room;
-      debugPrint('[task ${task.id}] resolved: ${room.platform.key}/${room.roomId} '
-          'title=${room.title} anchor=${room.anchorName}');
+      debugPrint(
+        '[task ${task.id}] resolved: ${room.platform.key}/${room.roomId} '
+        'title=${room.title} anchor=${room.anchorName}',
+      );
 
       if (room.platform == LivePlatform.douyin && douyinUrlResolver == null) {
         throw LinkResolveException('抖音录制将在下一版本支持');
@@ -317,8 +362,10 @@ class RecordingManager extends ChangeNotifier {
       final Directory dir;
       if (resume) {
         dir = Directory(task.outputDir!);
-        debugPrint('[task ${task.id}] resume in ${dir.path} '
-            'existing=${task.segments.length}');
+        debugPrint(
+          '[task ${task.id}] resume in ${dir.path} '
+          'existing=${task.segments.length}',
+        );
       } else {
         dir = await storage.createTaskDir(
           platformKey: room.platform.key,
@@ -340,29 +387,31 @@ class RecordingManager extends ChangeNotifier {
         // reflow 页（页面自己会跳到 live.douyin.com/<web_rid>，弹幕照常）。
         final commentUrl = room.platform == LivePlatform.douyin
             ? (room.webRid != null
-                ? 'https://live.douyin.com/${room.webRid}'
-                : room.pageUrl)
+                  ? 'https://live.douyin.com/${room.webRid}'
+                  : room.pageUrl)
             : room.pageUrl;
         debugPrint('[task ${task.id}] comment capture on: $commentUrl');
-        unawaited(capture
-            .startForTask(
-              taskId: task.id,
-              platform: room.platform,
-              roomUrl: commentUrl,
-              outputDir: dir.path,
-              startEpochMs:
-                  (task.startedAt ?? DateTime.now()).millisecondsSinceEpoch,
-              onComment: (comment) {
-                task.commentCount++;
-                task.lastCommentAt = comment.time;
+        unawaited(
+          capture
+              .startForTask(
+                taskId: task.id,
+                platform: room.platform,
+                roomUrl: commentUrl,
+                outputDir: dir.path,
+                startEpochMs:
+                    (task.startedAt ?? DateTime.now()).millisecondsSinceEpoch,
+                onComment: (comment) {
+                  task.commentCount++;
+                  task.lastCommentAt = comment.time;
+                  if (!_disposed) notifyListeners();
+                },
+              )
+              .catchError((Object e) {
+                debugPrint('[task ${task.id}] comment capture failed: $e');
+                task.commentCount = -1; // 负值表示采集失败，UI 显示异常
                 if (!_disposed) notifyListeners();
-              },
-            )
-            .catchError((Object e) {
-          debugPrint('[task ${task.id}] comment capture failed: $e');
-          task.commentCount = -1; // 负值表示采集失败，UI 显示异常
-          if (!_disposed) notifyListeners();
-        }));
+              }),
+        );
       }
 
       Future<String> urlProvider() async {
@@ -382,8 +431,16 @@ class RecordingManager extends ChangeNotifier {
             ? 'https://www.xiaohongshu.com/'
             : 'https://live.douyin.com/',
         onState: (state) {
-          if (!task.isActive && state == TaskState.recording) return;
+          // 任务已经被用户停止/已收尾时，录制器迟到的状态不能把它翻回去。
+          if (!task.isActive && state != TaskState.completed) return;
           task.state = state;
+          if (state == TaskState.recording) {
+            // 重连成功：清掉重试提示，通知文案恢复「录制中」。
+            task.reconnectAttempt = 0;
+            task.nextRetryAt = null;
+            task.lastErrorText = null;
+            task.errorMessage = null;
+          }
           debugPrint('[task ${task.id}] state=${state.name}');
           _persistTask(task);
           if (!_disposed) notifyListeners();
@@ -391,8 +448,10 @@ class RecordingManager extends ChangeNotifier {
         onSegment: (segment, finished) {
           if (finished) {
             task.currentSegment = null;
-            debugPrint('[task ${task.id}] segment done: ${segment.path} '
-                '${segment.bytes}B');
+            debugPrint(
+              '[task ${task.id}] segment done: ${segment.path} '
+              '${segment.bytes}B',
+            );
           } else {
             task.currentSegment = segment;
             task.segments.add(segment);
@@ -408,6 +467,25 @@ class RecordingManager extends ChangeNotifier {
           task.retryCount = recorder.retryCount;
           if (!_disposed) notifyListeners();
         },
+        onReconnect: (notice) {
+          if (notice.recovered) {
+            task.reconnectAttempt = 0;
+            task.nextRetryAt = null;
+            task.lastErrorText = null;
+            task.errorMessage = null;
+          } else {
+            task.reconnectAttempt = notice.attempt;
+            task.nextRetryAt = notice.nextRetryAt;
+            task.lastErrorText = notice.errorText;
+            // 连续失败超过 10 分钟：任务继续重试，但必须让人看得见异常。
+            task.errorMessage = notice.longFailure
+                ? '网络异常，已重试 ${notice.attempt} 次，仍在持续重连…'
+                : null;
+          }
+          task.retryCount = recorder.retryCount;
+          _persistTask(task);
+          if (!_disposed) notifyListeners();
+        },
       );
       _recorders[task.id] = recorder;
       if (resume) {
@@ -419,14 +497,30 @@ class RecordingManager extends ChangeNotifier {
 
       await recorder.run();
     } catch (e) {
-      task.state = TaskState.error;
-      task.errorMessage = e.toString().replaceFirst('LinkResolveException: ', '');
+      final String message = e.toString().replaceFirst(
+        'LinkResolveException: ',
+        '',
+      );
+      // 已经建好录像目录才开始录制：任何意外都按「中断可继续」处理，
+      // 绝不能像旧版那样落到 error 终态、让已录内容看起来"不可续录"。
+      if (task.outputDir == null) {
+        task.state = TaskState.error;
+        task.errorMessage = message;
+      } else {
+        task.state = TaskState.interrupted;
+        task.errorMessage = '录制异常中断：$message（已录内容已保留，可继续录制）';
+      }
       task.endedAt = DateTime.now();
+      task.currentSegment = null;
+      task.reconnectAttempt = 0;
+      task.nextRetryAt = null;
       debugPrint('[task ${task.id}] ERROR: ${task.errorMessage}');
     } finally {
       final FlvRecorder? finished = _recorders.remove(task.id);
       unawaited(comments?.stopForTask(task.id));
       task.currentSegment = null;
+      task.nextRetryAt = null;
+      task.reconnectAttempt = 0;
       if (finished != null) {
         task.totalBytes = finished.totalBytes;
         task.retryCount = finished.retryCount;
@@ -438,7 +532,10 @@ class RecordingManager extends ChangeNotifier {
         // 绝不能留下"界面显示录制中、实际已经不在写盘"的僵尸任务。
         task.state = TaskState.interrupted;
         task.endedAt ??= DateTime.now();
-        task.errorMessage ??= '录制器意外退出，已录内容已保留，可继续录制';
+        task.errorMessage ??= task.retryCount > 0
+            ? '网络异常，已重试 ${task.retryCount} 次，录制已中断'
+                  '（已录内容已保留，可继续录制）'
+            : '录制器意外退出，已录内容已保留，可继续录制';
       }
       _persistTask(task);
       if (!_disposed) notifyListeners();
@@ -460,23 +557,43 @@ class RecordingManager extends ChangeNotifier {
   }
 
   /// 小红书直链：默认画质用 `_hcv5401`（540P），该档位不存在时回退无后缀（1080P）。
+  ///
+  /// 弱网下 540P 探测必然可能失败/超时，但**探测失败只代表这一档不可用**，
+  /// 绝不能让它变成任务失败：一律回退默认直链，真正的连接重试交给 FlvRecorder。
   Future<String> _xhsUrl(LiveRoom room, RecordQuality quality) async {
-    if (quality == RecordQuality.highest) return room.flvUrl;
-    final String standard = room.flvUrlFor(RecordQuality.standard);
-    if (await _urlAlive(standard)) return standard;
-    debugPrint('[task] ${room.roomId} 没有 540P 档位，回退默认直链');
-    return room.flvUrl;
+    final String fallback = room.flvUrl;
+    if (quality == RecordQuality.highest) return fallback;
+    try {
+      final String standard = room.flvUrlFor(RecordQuality.standard);
+      if (standard.isNotEmpty && await _urlAlive(standard)) {
+        return standard;
+      }
+      debugPrint('[task] ${room.roomId} 没有 540P 档位，回退默认直链');
+    } catch (e) {
+      debugPrint('[task] ${room.roomId} 540P 探测异常，回退默认直链: $e');
+    }
+    return fallback;
   }
 
   Future<bool> _urlAlive(String url) async {
     final HttpClient client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 6);
+      ..connectionTimeout = const Duration(seconds: 3);
     try {
-      final HttpClientRequest request = await client.getUrl(Uri.parse(url));
-      request.headers.set(HttpHeaders.userAgentHeader, FlvRecorder.defaultUserAgent);
-      request.headers.set(HttpHeaders.refererHeader, 'https://www.xiaohongshu.com/');
-      final HttpClientResponse response = await request.close();
-      await response.drain<void>().catchError((_) {});
+      final HttpClientRequest request = await client
+          .getUrl(Uri.parse(url))
+          .timeout(const Duration(seconds: 3));
+      request.headers.set(
+        HttpHeaders.userAgentHeader,
+        FlvRecorder.defaultUserAgent,
+      );
+      request.headers.set(
+        HttpHeaders.refererHeader,
+        'https://www.xiaohongshu.com/',
+      );
+      // 只探测响应头，不 drain 直播流：直播是无限流，drain 会一直卡住。
+      final HttpClientResponse response = await request.close().timeout(
+        const Duration(seconds: 3),
+      );
       return response.statusCode == HttpStatus.ok;
     } catch (_) {
       return false;
@@ -492,6 +609,8 @@ class RecordingManager extends ChangeNotifier {
     task.endedAt = DateTime.now();
     task.currentSegment = null;
     task.externalOwner = false;
+    task.reconnectAttempt = 0;
+    task.nextRetryAt = null;
     notifyListeners();
     final recorder = _recorders[id];
     if (recorder != null) {
@@ -531,6 +650,43 @@ class RecordingManager extends ChangeNotifier {
       }
       _markInterrupted(task, '回到前台时发现录制器已退出，已录内容已保留，可继续录制');
     }
+  }
+
+  /// 每次通知界面/调用方前，把汇总状态同步给前台服务。
+  ///
+  /// main.dart 的监听器只传 activeCount；通知文案（重连第 N 次 / 已录 X MB）
+  /// 由这里算好，`ForegroundKeepAlive.sync` 会按完整文案签名去重并更新。
+  @override
+  void notifyListeners() {
+    if (!_disposed) _updateForegroundStatus();
+    super.notifyListeners();
+  }
+
+  void _updateForegroundStatus() {
+    var reconnecting = 0;
+    var maxAttempt = 0;
+    var totalBytes = 0;
+    var longFailure = false;
+    for (final RecordTask task in _tasks.values) {
+      if (!task.isActive) continue;
+      totalBytes += task.totalBytes;
+      if (task.state != TaskState.reconnecting) continue;
+      reconnecting++;
+      if (task.reconnectAttempt > maxAttempt) {
+        maxAttempt = task.reconnectAttempt;
+      }
+      if (task.errorMessage?.startsWith('网络异常') ?? false) {
+        longFailure = true;
+      }
+    }
+    ForegroundKeepAlive.updateStatus(
+      ForegroundStatus(
+        reconnectingCount: reconnecting,
+        reconnectAttempt: maxAttempt,
+        totalBytes: totalBytes,
+        longFailure: longFailure,
+      ),
+    );
   }
 
   @override

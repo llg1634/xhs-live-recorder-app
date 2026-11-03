@@ -18,14 +18,14 @@ extension TaskStateX on TaskState {
       this == TaskState.reconnecting;
 
   String get label => switch (this) {
-        TaskState.resolving => '解析中',
-        TaskState.recording => '录制中',
-        TaskState.reconnecting => '重连探测中',
-        TaskState.completed => '直播结束',
-        TaskState.stopped => '已停止',
-        TaskState.interrupted => '已中断',
-        TaskState.error => '出错',
-      };
+    TaskState.resolving => '解析中',
+    TaskState.recording => '录制中',
+    TaskState.reconnecting => '重连中',
+    TaskState.completed => '直播结束',
+    TaskState.stopped => '已停止',
+    TaskState.interrupted => '已中断',
+    TaskState.error => '出错',
+  };
 }
 
 /// 一个录制分段文件。
@@ -44,35 +44,33 @@ class RecordSegment {
   int bytes;
   DateTime? endedAt;
 
-  Duration get duration =>
-      (endedAt ?? DateTime.now()).difference(startedAt);
+  Duration get duration => (endedAt ?? DateTime.now()).difference(startedAt);
 
   bool get isComplete => endedAt != null;
 
   Map<String, dynamic> toJson() => {
-        'path': path,
-        'index': index,
-        'startedAt': startedAt.toIso8601String(),
-        'endedAt': endedAt?.toIso8601String(),
-        'bytes': bytes,
-      };
+    'path': path,
+    'index': index,
+    'startedAt': startedAt.toIso8601String(),
+    'endedAt': endedAt?.toIso8601String(),
+    'bytes': bytes,
+  };
 
   static RecordSegment fromJson(Map<String, dynamic> json) => RecordSegment(
-        path: '${json['path']}',
-        index: (json['index'] as num?)?.toInt() ?? 0,
-        startedAt:
-            DateTime.tryParse('${json['startedAt']}') ?? DateTime.now(),
-        endedAt: json['endedAt'] == null
-            ? null
-            : DateTime.tryParse('${json['endedAt']}'),
-        bytes: (json['bytes'] as num?)?.toInt() ?? 0,
-      );
+    path: '${json['path']}',
+    index: (json['index'] as num?)?.toInt() ?? 0,
+    startedAt: DateTime.tryParse('${json['startedAt']}') ?? DateTime.now(),
+    endedAt: json['endedAt'] == null
+        ? null
+        : DateTime.tryParse('${json['endedAt']}'),
+    bytes: (json['bytes'] as num?)?.toInt() ?? 0,
+  );
 }
 
 /// 单个直播间的录制任务。
 class RecordTask {
   RecordTask({required this.id, required this.rawInput, DateTime? createdAt})
-      : createdAt = createdAt ?? DateTime.now();
+    : createdAt = createdAt ?? DateTime.now();
 
   final String id;
 
@@ -91,8 +89,20 @@ class RecordTask {
   /// 已写入字节数。
   int totalBytes = 0;
 
-  /// 断流重连次数。
+  /// 断流重连次数（累计值，跨多次断流不清零）。
   int retryCount = 0;
+
+  /// 当前这一轮连续重连的尝试序号（连接成功后归零）。
+  ///
+  /// 与 [retryCount] 的区别：前者用于通知/卡片显示「重连中（第 N 次）」，
+  /// 后者用于统计整场录制一共重连了多少次。
+  int reconnectAttempt = 0;
+
+  /// 最近一次重连失败的原因（仅供展示，不代表任务失败）。
+  String? lastErrorText;
+
+  /// 下一次重连的时间点（用于 UI / 通知倒计时，任务本身仍保持 reconnecting）。
+  DateTime? nextRetryAt;
 
   /// 探测失败次数（用于"直播结束"判定）。
   int probeFailCount = 0;
@@ -142,22 +152,25 @@ class RecordTask {
   bool get isActive => state.isActive;
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'rawInput': rawInput,
-        'createdAt': createdAt.toIso8601String(),
-        'room': room?.toJson(),
-        'state': state.name,
-        'errorMessage': errorMessage,
-        'outputDir': outputDir,
-        'totalBytes': totalBytes,
-        'retryCount': retryCount,
-        'startedAt': startedAt?.toIso8601String(),
-        'endedAt': endedAt?.toIso8601String(),
-        'segments': segments.map((s) => s.toJson()).toList(),
-        'commentCount': commentCount,
-        'commentsEnabled': commentsEnabled,
-        'lastCommentAt': lastCommentAt?.toIso8601String(),
-      };
+    'id': id,
+    'rawInput': rawInput,
+    'createdAt': createdAt.toIso8601String(),
+    'room': room?.toJson(),
+    'state': state.name,
+    'errorMessage': errorMessage,
+    'outputDir': outputDir,
+    'totalBytes': totalBytes,
+    'retryCount': retryCount,
+    'reconnectAttempt': reconnectAttempt,
+    'lastErrorText': lastErrorText,
+    'nextRetryAt': nextRetryAt?.toIso8601String(),
+    'startedAt': startedAt?.toIso8601String(),
+    'endedAt': endedAt?.toIso8601String(),
+    'segments': segments.map((s) => s.toJson()).toList(),
+    'commentCount': commentCount,
+    'commentsEnabled': commentsEnabled,
+    'lastCommentAt': lastCommentAt?.toIso8601String(),
+  };
 
   /// 从 `session.json` 恢复任务（用于进程被杀后的补偿）。
   static RecordTask fromJson(Map<String, dynamic> json) {
@@ -181,6 +194,9 @@ class RecordTask {
     task.outputDir = json['outputDir']?.toString();
     task.totalBytes = (json['totalBytes'] as num?)?.toInt() ?? 0;
     task.retryCount = (json['retryCount'] as num?)?.toInt() ?? 0;
+    task.reconnectAttempt = (json['reconnectAttempt'] as num?)?.toInt() ?? 0;
+    task.lastErrorText = json['lastErrorText']?.toString();
+    task.nextRetryAt = DateTime.tryParse('${json['nextRetryAt']}');
     task.startedAt = DateTime.tryParse('${json['startedAt']}');
     task.endedAt = DateTime.tryParse('${json['endedAt']}');
     task.commentCount = (json['commentCount'] as num?)?.toInt() ?? 0;
