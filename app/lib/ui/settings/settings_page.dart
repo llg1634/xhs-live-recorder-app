@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../../app.dart';
 import '../../models/quality.dart';
+import '../../services/foreground_service.dart';
 import '../../services/recording_manager.dart';
 import '../../services/storage_service.dart';
 import '../../theme/glass_palette.dart';
@@ -351,7 +352,9 @@ class _SettingsPageState extends State<SettingsPage> {
                         _InfoRow(
                           icon: Icons.swap_horiz_rounded,
                           title: '断流重连',
-                          value: '5s × 3',
+                          subtitle: '2s→30s 指数退避、无限重试；18s 无数据主动重连。',
+                          value: '自动',
+                          valueColor: c.accent,
                         ),
                         const GlassDivider(indent: 16, endIndent: 16),
                         const _InfoRow(
@@ -361,6 +364,14 @@ class _SettingsPageState extends State<SettingsPage> {
                               '小红书 · 抖音（均已支持录制与弹幕）\n'
                               '录制 FLV · 弹幕 JSONL + ASS 字幕',
                         ),
+                      ],
+                    ),
+                    const SizedBox(height: GlassTokens.gapXl),
+                    const GlassSectionHeader(title: '后台保活'),
+                    const SizedBox(height: 10),
+                    const _SettingsGroup(
+                      children: <Widget>[
+                        _BatteryGuardRow(),
                       ],
                     ),
                     const SizedBox(height: GlassTokens.gapXl),
@@ -377,7 +388,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         _InfoRow(
                           icon: Icons.tag_rounded,
                           title: '版本',
-                          value: '1.0.0',
+                          value: '1.0.2',
                         ),
                         const GlassDivider(indent: 16, endIndent: 16),
                         _InfoRow(
@@ -803,6 +814,92 @@ class _ThemeModeChooser extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// 后台保活：电池优化豁免状态。
+///
+/// 为什么必须引导用户关掉电池优化：前台服务只能保住"进程优先级"，
+/// 设备进入 Doze 后系统会掐断后台网络；没有豁免时断流后连不上，
+/// 表现就是「后台不会重试，必须打开 App 才恢复」。
+class _BatteryGuardRow extends StatefulWidget {
+  const _BatteryGuardRow();
+
+  @override
+  State<_BatteryGuardRow> createState() => _BatteryGuardRowState();
+}
+
+class _BatteryGuardRowState extends State<_BatteryGuardRow>
+    with WidgetsBindingObserver {
+  bool? _exempt;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _load();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 从系统设置页回来时刷新状态。
+    if (state == AppLifecycleState.resumed) _load();
+  }
+
+  Future<void> _load() async {
+    final bool value =
+        await ForegroundKeepAlive.isIgnoringBatteryOptimizations();
+    if (!mounted) return;
+    setState(() => _exempt = value);
+  }
+
+  Future<void> _request() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    await ForegroundKeepAlive.requestIgnoreBatteryOptimizations();
+    await Future<void>.delayed(const Duration(milliseconds: 800));
+    await _load();
+    if (mounted) setState(() => _busy = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final GlassColors c = GlassColors.of(context);
+    final bool? exempt = _exempt;
+    final Color tone = exempt == true ? const Color(0xFF31D07A) : c.accent;
+    return _InfoRow(
+      icon: Icons.battery_saver_rounded,
+      iconColor: tone,
+      title: '电池优化',
+      subtitle: exempt == null
+          ? '检查中…'
+          : exempt
+          ? '已豁免：息屏/后台保持联网，断流会自动重试。\n小米/红米建议再把「省电策略」设为「无限制」。'
+          : '未豁免：息屏后系统会掐断后台网络，断流无法自动重试。\n'
+                '小米/红米还需把「省电策略」设为「无限制」并允许「自启动」。',
+      value: exempt == null ? '—' : (exempt ? '已豁免' : '未豁免'),
+      valueColor: tone,
+      trailing: Pressable(
+        onTap: _request,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Text(
+            _busy ? '打开中…' : (exempt == true ? '复查' : '去设置'),
+            style: GlassText.caption(c, color: c.accent).copyWith(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
       ),
     );
   }

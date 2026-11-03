@@ -139,4 +139,39 @@ class ForegroundKeepAlive {
       await _channel.invokeMethod<void>('openNotificationSettings');
     } catch (_) {}
   }
+
+  /// 是否已获得「忽略电池优化」豁免。
+  ///
+  /// 没有豁免时，设备进入 Doze 会掐断后台网络 —— 断流后连不上、也不会重试，
+  /// 直到用户重新打开 App。这是「后台自动重连」能否成立的前提。
+  static Future<bool> isIgnoringBatteryOptimizations() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      final bool? value =
+          await _channel.invokeMethod<bool>('isIgnoringBatteryOptimizations');
+      return value ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 弹系统「忽略电池优化」确认框；返回是否成功拉起系统页面。
+  static Future<bool> requestIgnoreBatteryOptimizations() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      final bool? value = await _channel
+          .invokeMethod<bool>('requestIgnoreBatteryOptimizations');
+      return value ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 打开本应用的系统详情页（小米的「省电策略 / 自启动」在附近）。
+  static Future<void> openAppSettings() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('openAppSettings');
+    } catch (_) {}
+  }
 }

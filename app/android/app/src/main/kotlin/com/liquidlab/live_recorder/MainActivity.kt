@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.Settings
 import com.liquidlab.live_recorder.player.FlvPlayerPlugin
 import io.flutter.embedding.android.FlutterActivity
@@ -198,6 +199,16 @@ class MainActivity : FlutterActivity() {
                         openNotificationSettings()
                         result.success(true)
                     }
+                    "isIgnoringBatteryOptimizations" -> {
+                        result.success(isIgnoringBatteryOptimizations())
+                    }
+                    "requestIgnoreBatteryOptimizations" -> {
+                        result.success(requestIgnoreBatteryOptimizations())
+                    }
+                    "openAppSettings" -> {
+                        openAppSettings()
+                        result.success(true)
+                    }
                     "requestStoragePermission" -> {
                         requestStoragePermission()
                         result.success(true)
@@ -295,6 +306,51 @@ class MainActivity : FlutterActivity() {
                 }
             }
             startActivity(intent)
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * 是否已「忽略电池优化」。
+     *
+     * 没被豁免时，设备进入 Doze 会**直接掐断后台网络**：断流后连不上，
+     * 看起来就是「后台不会重试，打开 App 才恢复」。这是录制类 App 的硬门槛。
+     */
+    private fun isIgnoringBatteryOptimizations(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        return try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            pm.isIgnoringBatteryOptimizations(packageName)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** 弹系统「忽略电池优化」确认框；部分国产 ROM 没有该页面时退回电池优化列表。 */
+    private fun requestIgnoreBatteryOptimizations(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        return try {
+            startActivity(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    .setData(Uri.parse("package:$packageName")),
+            )
+            true
+        } catch (_: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            } catch (_: Exception) {
+            }
+            false
+        }
+    }
+
+    /** 打开本应用的系统详情页（小米：省电策略 / 自启动都在这一层附近）。 */
+    private fun openAppSettings() {
+        try {
+            startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    .setData(Uri.parse("package:$packageName")),
+            )
         } catch (_: Exception) {
         }
     }
