@@ -12,7 +12,7 @@ English README: [README.en.md](README.en.md)
 
 ## 安装（下载哪个文件，看这里）
 
-方式一（推荐）：点击页面右侧 **Releases**，下载最新版本的 `live-recorder-arm64-v1.0.0.apk`。
+方式一（推荐）：点击页面右侧 **Releases**，下载最新版本的 `live-recorder-arm64-v1.0.1.apk`。
 
 1. 在手机浏览器或文件管理器里点开下载好的 APK
 2. 系统提示「禁止安装未知来源应用」时，允许当前应用安装未知应用

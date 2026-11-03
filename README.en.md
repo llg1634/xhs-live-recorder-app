@@ -31,7 +31,7 @@ It records the **network stream**, not the screen: video comes from the same sou
 
 ## Install (which file to download)
 
-Option 1 (recommended): open **Releases**, download `live-recorder-arm64-v1.0.0.apk`.
+Option 1 (recommended): open **Releases**, download `live-recorder-arm64-v1.0.1.apk`.
 
 Option 2: build from source (see below).
 
