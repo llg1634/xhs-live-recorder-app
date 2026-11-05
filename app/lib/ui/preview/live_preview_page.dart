@@ -489,6 +489,16 @@ class _LivePreviewPageState extends State<LivePreviewPage>
     final int h = _asInt(data['height']);
     final String message = data['message']?.toString() ?? '';
 
+    // 调试构建下打印播放进度：真机/模拟器截屏不可用时，靠日志确认
+    // 「是否真的在往前走」以及停在哪一帧。
+    assert(() {
+      debugPrint(
+        '[preview] phase=$phase pos=${data['position']} '
+        'dur=${data['duration']} buf=${data['buffered']} msg=$message',
+      );
+      return true;
+    }());
+
     if (phase == 'error' && _looksLikeCodecUnsupported(message)) {
       _switchToNative(reason: message);
       return;

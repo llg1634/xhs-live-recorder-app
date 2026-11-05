@@ -219,61 +219,67 @@ class _SegmentOutcome {
       statusCode == HttpStatus.notFound || statusCode == HttpStatus.gone;
 }
 
-/// 串行化 `IOSink.add` / `flush` 的小包装。
+/// 分段写盘器：`RandomAccessFile` + **单一 Future 链串行化**所有操作。
 ///
-/// Dart 的 IOSink.flush() 会把 sink 标记为 "bound to a stream"，期间任何 add
-/// 都会抛 `Bad state: StreamSink is bound to a stream`。录制器的 1 秒定时 flush
-/// 与持续到达的直播数据天然并发，必须把 flush 期间的字节先缓存在内存里，
-/// 等 flush 完成后再写入；否则每秒就会中断一次分段。
-class _SegmentSink {
-  _SegmentSink(this._sink);
+/// 为什么不用 `IOSink`：
+/// - `IOSink.add` 是异步的，配合 1 秒定时 `flush()` 会出现「flush 期间的数据
+///   先缓存、flush 结束后新数据直接写、缓存的旧数据却在下一轮才补写」——
+///   **字节顺序被打乱，FLV 从某一刻起解析错位，播放只能放到前几秒**；
+/// - `IOSink.flush()` 与 `add()` 并发还会偶发 `Bad state: StreamSink is bound to a stream`。
+///
+/// 为什么不用 `writeFromSync`：同步写阻塞事件循环，实测吞吐腰斩。
+///
+/// 这里把所有 `writeFrom` / `flush` / `close` 挂到同一条 Future 链上，
+/// 保证：① 写入顺序 === 收到顺序；② 任意时刻只有一个异步文件操作在飞
+/// （RandomAccessFile 混用并发异步操作会抛 "async operation is currently pending"，
+///  并丢掉当前块）；③ 不阻塞 socket 读取。
+class _SegmentWriter {
+  _SegmentWriter(this._raf);
 
-  final IOSink _sink;
-  final List<int> _pending = <int>[];
-  Future<void>? _flushing;
+  final RandomAccessFile _raf;
+  Future<void> _chain = Future<void>.value();
+  int _written = 0;
   bool _closed = false;
 
+  int get written => _written;
+
   void add(List<int> data) {
-    if (_closed) return;
-    if (_flushing != null) {
-      _pending.addAll(data);
-      return;
-    }
-    _sink.add(data);
+    if (_closed || data.isEmpty) return;
+    final Uint8List chunk = data is Uint8List ? data : Uint8List.fromList(data);
+    _chain = _chain
+        .then((_) async {
+          await _raf.writeFrom(chunk);
+          _written += chunk.length;
+        })
+        .catchError((Object e) {
+          debugPrint('[rec] write failed: $e');
+        });
   }
 
   Future<void> flush() {
     if (_closed) return Future<void>.value();
-    final Future<void>? inFlight = _flushing;
-    if (inFlight != null) return inFlight;
-    if (_pending.isNotEmpty) {
-      _sink.add(_pending);
-      _pending.clear();
-    }
-    final Future<void> future = _sink.flush().whenComplete(() {
-      _flushing = null;
-    });
-    _flushing = future;
-    return future;
+    _chain = _chain
+        .then((_) async {
+          await _raf.flush();
+        })
+        .catchError((Object e) {
+          debugPrint('[rec] flush failed: $e');
+        });
+    return _chain;
   }
 
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
-    final Future<void>? inFlight = _flushing;
-    if (inFlight != null) {
-      try {
-        await inFlight;
-      } catch (_) {}
-    }
-    if (_pending.isNotEmpty) {
-      _sink.add(_pending);
-      _pending.clear();
-    }
     try {
-      await _sink.flush();
+      await _chain;
     } catch (_) {}
-    await _sink.close();
+    try {
+      await _raf.flush();
+    } catch (_) {}
+    try {
+      await _raf.close();
+    } catch (_) {}
   }
 }
 
@@ -622,7 +628,7 @@ class FlvRecorder {
     _client = client;
 
     RecordSegment? segment;
-    _SegmentSink? sink;
+    _SegmentWriter? sink;
     _sinkClosed = false; // 新连接开始，上一个分段留下的关闭标记不能带进来
     _currentSegmentSawData = false;
     var sawData = false;
@@ -693,7 +699,12 @@ class FlvRecorder {
               );
               segment = created;
               segments.add(created);
-              final _SegmentSink opened = _SegmentSink(file.openWrite());
+              final _SegmentWriter opened = _SegmentWriter(
+                // 同步打开：这里在 socket 回调里，无法 await；openSync 只做一次
+                // 系统调用，开销可以忽略。FileMode.write = 截断/新建，
+                // 文件路径已由 _freeSegmentFile 保证不存在。
+                file.openSync(mode: FileMode.write),
+              );
               sink = opened;
               _sinkClosed = false;
               _flvHeader = null;
@@ -721,9 +732,11 @@ class FlvRecorder {
           // 每个 chunk 都重置 idle 定时器：否则持续有数据时 25s 也会被误判"没数据"
           // 而强制结束分段（重连后每 25s 断一次，和旧版 15s 判死同类问题）。
           _restartIdleTimer();
-          final Uint8List bytes = chunk is Uint8List
-              ? chunk
-              : Uint8List.fromList(chunk);
+          // **必须拷贝**：HttpClient 返回的 Uint8List 往往是可复用的接收缓冲区，
+          // 而 IOSink.add 是异步落盘。直接持有原 buffer，等真正写入时内容已被
+          // 下一次读取覆盖 —— 录出来的文件在几秒后就会变成乱码、只能播前几秒。
+          // 这是 v1.0.1 重写时引入的回归（旧版一直用 fromList 拷贝）。
+          final Uint8List bytes = Uint8List.fromList(chunk);
           _consumeForPrelude(bytes);
           try {
             sink!.add(bytes);
@@ -794,7 +807,7 @@ class FlvRecorder {
       _subscription = null;
 
       // 重连前必须把已经写入的字节 flush 到磁盘：断流时不能丢最后 1 秒数据。
-      final _SegmentSink? sinkToClose = sink;
+      final _SegmentWriter? sinkToClose = sink;
       try {
         if (sinkToClose != null) {
           await sinkToClose.flush();
@@ -814,7 +827,7 @@ class FlvRecorder {
     }
   }
 
-  void _startFlushTimer(_SegmentSink sink) {
+  void _startFlushTimer(_SegmentWriter sink) {
     _flushTimer?.cancel();
     _flushTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
       try {
