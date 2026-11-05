@@ -31,7 +31,7 @@ It records the **network stream**, not the screen: video comes from the same sou
 
 ## Install (which file to download)
 
-Option 1 (recommended): open **Releases**, download `live-recorder-arm64-v1.0.1.apk`.
+Option 1 (recommended): open **Releases**, download `live-recorder-arm64-v1.0.2.apk`.
 
 Option 2: build from source (see below).
 
@@ -115,7 +115,7 @@ xhs-live-recorder-app/
 
 ## Version
 
-- Current: `1.0.0`
+- Current: `1.0.2`
 - Stack: Flutter + Dart, native Kotlin foreground service, WebView-injected danmaku hooks
 - Protocol notes: `docs/comments.md`, `docs/douyin.md`
 

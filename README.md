@@ -12,7 +12,7 @@ English README: [README.en.md](README.en.md)
 
 ## 安装（下载哪个文件，看这里）
 
-方式一（推荐）：点击页面右侧 **Releases**，下载最新版本的 `live-recorder-arm64-v1.0.1.apk`。
+方式一（推荐）：点击页面右侧 **Releases**，下载最新版本的 `live-recorder-arm64-v1.0.2.apk`。
 
 1. 在手机浏览器或文件管理器里点开下载好的 APK
 2. 系统提示「禁止安装未知来源应用」时，允许当前应用安装未知应用
@@ -135,7 +135,7 @@ xhs-live-recorder-app/
 
 ## 开发与版本
 
-- 当前版本：`1.0.1`
+- 当前版本：`1.0.2`
 - 技术栈：Flutter + Dart，原生 Kotlin 前台服务 + MediaCodec 播放器；弹幕在 WebView 内注入 hook，用页面自身的长连接会话解码
 - 关键实现记录：`docs/comments.md`（两平台协议差异、帧结构、内存与后台实测数据）、`docs/douyin.md`（拉流地址解析）、`docs/hevc.md`（H.265 直播流与原生播放器）
 
