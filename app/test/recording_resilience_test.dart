@@ -39,6 +39,45 @@ void main() {
       expect(FlvRecorder.segmentIndexFromPath('/rec/comments.jsonl'), isNull);
     });
 
+    test('新命名：时间戳_平台+序号 能解析，且与旧命名混排时取最大序号', () {
+      expect(
+        FlvRecorder.segmentIndexFromPath('/rec/261105_113441_partxhs12.flv'),
+        12,
+      );
+      expect(
+        FlvRecorder.segmentIndexFromPath('/rec/261105_113441_partdy03.flv'),
+        3,
+      );
+      expect(
+        FlvRecorder.nextIndexFor(<String>[
+          '/rec/part01.flv',
+          '/rec/261105_113441_partxhs02.flv',
+          '/rec/261105_120000_partxhs03.flv',
+          '/rec/session.json',
+        ]),
+        4,
+      );
+    });
+
+    test('文件名格式：YYMMDD_HHmmss_part平台NN.flv', () {
+      expect(
+        FlvRecorder.segmentFileNameFor(
+          1,
+          DateTime(2026, 11, 5, 11, 34, 41),
+          platformTag: 'xhs',
+        ),
+        '261105_113441_partxhs01.flv',
+      );
+      expect(
+        FlvRecorder.segmentFileNameFor(
+          12,
+          DateTime(2026, 1, 2, 3, 4, 5),
+          platformTag: 'dy',
+        ),
+        '260102_030405_partdy12.flv',
+      );
+    });
+
     test('空目录从 part01 开始', () {
       expect(FlvRecorder.nextIndexFor(const <String>[]), 1);
     });

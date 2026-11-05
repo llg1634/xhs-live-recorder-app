@@ -75,17 +75,19 @@ flutter build apk --release --target-platform android-arm64
 
 ```text
 xhs_570511686529001102_主播昵称_20261025-222924/
-├── part01.flv        # 第 1 段视频（断流重连 / 续录会生成 part02、part03…）
-├── part02.flv
+├── 261105_113441_partxhs01.flv   # 第 1 段（时间戳_平台序号；断流重连生成 partxhs02…）
+├── 261105_114203_partxhs02.flv
 ├── comments.jsonl    # 结构化弹幕 {"ts":...,"user":"...","text":"...","commentId":"..."}
 ├── comments.ass      # 弹幕字幕（右→左滚动），PotPlayer 可直接加载
 ├── comments.srt      # 普通字幕
 └── session.json      # 录制状态（中断恢复用，可删）
 ```
 
+分段命名规则：`YYMMDD_HHmmss_part平台序号.flv`，平台为 `xhs`（小红书）或 `dy`（抖音），序号从 `01` 开始。时间戳是这一段开始录制的时间——导出到其他播放器/文件管理器后也能一眼看出是哪天几点录的。旧版本录的 `part01.flv` 仍然兼容，续录时会接着往后编号。
+
 ### PotPlayer 加载弹幕
 
-用 PotPlayer 打开 `part01.flv`，把同目录的 `comments.ass` 拖进播放器窗口即可（同目录同名会自动加载）。多个分段连续播放时，字幕时间轴从第一段开始计算。
+用 PotPlayer 打开任意一个分段（如 `261105_113441_partxhs01.flv`），把同目录的 `comments.ass` 拖进播放器窗口即可（同目录同名会自动加载）。多个分段连续播放时，字幕时间轴从第一段开始计算。
 
 ## 目录结构
 
@@ -126,7 +128,7 @@ xhs-live-recorder-app/
 - **弹幕占内存**：每路采集 WebView 约 400 MB，多路请按手机内存酌情开启。
 - **划掉 App 会怎样**：停止录制。因为边录边写盘，已录内容完整保留（最多丢最后 1 秒），录像页可直接回放。
 - **被杀进程后还能接着录吗**：能。重开 App 后该任务显示「已中断 · 已保留 N 段」，点 ▶ 从下一个分段号继续。
-- **分段能合并吗**：可以，`ffmpeg -f concat -safe 0 -i list.txt -c copy out.flv`，`list.txt` 里按顺序写 `file 'part01.flv'`。
+- **分段能合并吗**：可以，`ffmpeg -f concat -safe 0 -i list.txt -c copy out.flv`，`list.txt` 里按时间顺序写每个分段，例如 `file '261105_113441_partxhs01.flv'`、`file '261105_114203_partxhs02.flv'`。
 - **预览打不开**：预览走本机 `127.0.0.1` 的 HTTP 服务，部分系统浏览器限制本地回环，用 App 内预览页即可。
 - **支持登录才能看的直播吗**：不支持，只做匿名公开直播间。
 

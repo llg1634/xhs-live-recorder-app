@@ -516,31 +516,58 @@ class FlvRecorder {
     return maxIndex + 1;
   }
 
-  /// 从 `part12.flv` 解析出 12；不是分段文件名返回 null。
+  /// 从 `261105_113441_partxhs12.flv` / 旧版 `part12.flv` 解析出 12。
+  ///
+  /// 兼容两种命名：老录像（partNN）和新命名（时间戳_part平台NN），
+  /// 这样升级后老的 part01 仍然能被识别、继续往后编号，不会覆盖。
   static int? segmentIndexFromPath(String path) {
     final RegExpMatch? match = RegExp(
-      r'part(\d+)\.flv$',
+      r'part(?:xhs|dy)?(\d+)\.flv$',
       caseSensitive: false,
     ).firstMatch(path);
     if (match == null) return null;
     return int.tryParse(match.group(1) ?? '');
   }
 
-  /// `part01.flv` 这种固定宽度命名，保证按文件名排序也是录制顺序。
-  static String _segmentFileName(int index) =>
-      'part${index.toString().padLeft(2, '0')}.flv';
+  /// 分段文件名里的平台短标记：小红书 `partxhs`，抖音 `partdy`。
+  String get _platformTag =>
+      room.platform == LivePlatform.douyin ? 'dy' : 'xhs';
+
+  static String _two(int value) => value.toString().padLeft(2, '0');
+
+  /// `261105_113441`：YYMMDD_HHmmss（分段开始时间，本地时区）。
+  static String stampFor(DateTime time) =>
+      '${_two(time.year % 100)}${_two(time.month)}${_two(time.day)}'
+      '_${_two(time.hour)}${_two(time.minute)}${_two(time.second)}';
+
+  /// 分段文件名：`261105_113441_partxhs01.flv` / `..._partdy01.flv`。
+  ///
+  /// 加时间戳是为了导出后在其他播放器/文件管理器里也能一眼看出录制时间；
+  /// 平台标记（xhs/dy）避免同一目录里两个平台的分段混在一起分不清。
+  static String segmentFileNameFor(
+    int index,
+    DateTime startedAt, {
+    required String platformTag,
+  }) =>
+      '${stampFor(startedAt)}_part$platformTag'
+      '${index.toString().padLeft(2, '0')}.flv';
+
+  String _segmentFileName(int index, DateTime startedAt) =>
+      segmentFileNameFor(index, startedAt, platformTag: _platformTag);
 
   /// 找一个未被占用的分段文件名；只计算路径，不提前创建空文件。
   ///
-  /// 失败的重连尝试不应该在录像目录里留下几十个 0 字节 `partNN.flv`，
+  /// 失败的重连尝试不应该在录像目录里留下几十个 0 字节分段，
   /// 所以文件在**收到第一块数据时**才真正 openWrite。
-  Future<File> _freeSegmentFile(int index) async {
+  Future<File> _freeSegmentFile(int index, DateTime startedAt) async {
     var safeIndex = index;
-    var file = File(p.join(outputDir.path, _segmentFileName(safeIndex)));
+    var file = File(
+      p.join(outputDir.path, _segmentFileName(safeIndex, startedAt)),
+    );
     for (var i = 0; i < 32; i++) {
       if (!await file.exists()) return file;
       safeIndex++;
-      file = File(p.join(outputDir.path, _segmentFileName(safeIndex)));
+      file = File(p.join(outputDir.path, _segmentFileName(safeIndex, startedAt)));
     }
     throw FileSystemException('32 个分段候选名均已被占用', file.path);
   }
@@ -578,7 +605,9 @@ class FlvRecorder {
     final File file;
     try {
       await outputDir.create(recursive: true);
-      file = await _freeSegmentFile(index);
+      // 时间戳取「本次连接开始」的时刻：分段文件在她开始被写之前命名，
+      // 与录制时间误差只有连接建立的几秒，导出后仍能按时间定位。
+      file = await _freeSegmentFile(index, DateTime.now());
     } catch (e) {
       return _SegmentOutcome(
         _SegmentReason.error,

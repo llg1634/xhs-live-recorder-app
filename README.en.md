@@ -72,17 +72,19 @@ Output: `app/build/app/outputs/flutter-apk/app-release.apk`. Requires Flutter 3.
 
 ```text
 xhs_570511686529001102_nick_20261025-222924/
-├── part01.flv        # segment 1 (part02, part03 … after reconnects / resume)
-├── part02.flv
+├── 261105_113441_partxhs01.flv   # segment 1 (timestamp_platformNN; partxhs02 … after reconnects)
+├── 261105_114203_partxhs02.flv
 ├── comments.jsonl    # {"ts":...,"user":"...","text":"...","commentId":"..."}
 ├── comments.ass      # scrolling danmaku subtitles
 ├── comments.srt      # plain subtitles
 └── session.json      # recording state for crash recovery (safe to delete)
 ```
 
+Segment names follow `YYMMDD_HHmmss_partPLATFORMxx.flv`, where `PLATFORM` is `xhs` or `dy`; the timestamp is when that segment started. Old `part01.flv` recordings remain compatible and continue numbering.
+
 ### PotPlayer
 
-Open `part01.flv` in PotPlayer and drag `comments.ass` into the window (same folder and name loads automatically).
+Open any segment (e.g. `261105_113441_partxhs01.flv`) in PotPlayer and drag `comments.ass` into the window (same folder and name loads automatically).
 
 ## Project layout
 
